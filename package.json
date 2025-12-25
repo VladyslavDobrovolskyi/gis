@@ -1,6 +1,7 @@
 {
   "name": "@gis/core",
   "version": "0.0.0",
+  "type": "module",
   "engines": {
     "node": "24.12.0"
   },
@@ -58,7 +59,7 @@
   },
   "lint-staged": {
     "*.{ts,vue}": [
-      "tsc --skipLibCheck --noEmit --esModuleInterop --allowSyntheticDefaultImports",
+      "node ./scripts/tslint.js",
       "eslint --fix",
       "prettier --write"
     ],
