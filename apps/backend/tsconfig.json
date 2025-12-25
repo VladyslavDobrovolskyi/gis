@@ -11,6 +11,7 @@
     "sourceMap": true,
     "paths": {
       "@/*": ["./*"],
+      "@trpc": ["./src/trpc"],
       "@db/*": ["./db/*"],
       "@queries/*": ["./db/sql/*"],
       "@generated/*": ["./db/generated/*"],

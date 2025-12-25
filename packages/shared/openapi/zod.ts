@@ -4,7 +4,7 @@ import {
   CitiesSchema,
   GetDistanceFromToParamsSchema,
   GetDistanceFromToResultSchema,
-} from '../schemas/city.schema';
+} from '@schemas/city.schema';
 
 export const document: ReturnType<typeof createDocument> = createDocument({
   openapi: '3.1.0',

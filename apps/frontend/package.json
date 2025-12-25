@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@gis/shared": "workspace:*",
+    "@trpc/client": "^11.8.1",
     "@vue-leaflet/vue-leaflet": "^0.10.1",
     "leaflet": "^1.9.4",
     "vue": "^3.5.24",

@@ -21,9 +21,9 @@
       "types": "./dist/schemas/index.d.ts",
       "default": "./dist/schemas/index.js"
     },
-    "./openapi": {
-      "types": "./dist/api/index.d.ts",
-      "default": "./dist/api/index.js"
+    "./openapi/*": {
+      "types": "./dist/openapi/index.d.ts",
+      "default": "./dist/openapi/index.js"
     }
   },
   "dependencies": {

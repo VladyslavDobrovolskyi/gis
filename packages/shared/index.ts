@@ -1,2 +1,3 @@
 export * from './schemas/city.schema';
-export * from './api/openapi';
+export * from './openapi/zod';
+export * from './openapi/trpc';
