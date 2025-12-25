@@ -58,7 +58,7 @@
   },
   "lint-staged": {
     "*.{ts,vue}": [
-      "tsc --noEmit",
+      "tsc --skipLibCheck --noEmit --esModuleInterop --allowSyntheticDefaultImports",
       "eslint --fix",
       "prettier --write"
     ],
