@@ -11,6 +11,7 @@ import {
 } from '@gis/shared/schemas';
 
 import { setupSwagger } from '@docs/swagger';
+import { ZodError } from 'zod';
 
 const app = express();
 const port = 3000;
@@ -36,19 +37,18 @@ app.get('/', async (req, res) => {
 });
 
 app.get('/distance', async (req, res) => {
-  const { from, to } = GetDistanceFromToParamsSchema.parse(req.query);
-
-  if (!from || !to) {
-    return res.status(400).json({ error: 'Please provide "from" and "to" query parameters' });
-  }
-
   try {
+    const { from, to } = GetDistanceFromToParamsSchema.parse(req.query);
     const result = await runOne(getDistanceFromTo, { from: String(from), to: String(to) });
     const distance = GetDistanceFromToResultSchema.parse(result);
     res.json(distance);
   } catch (err) {
-    console.error('Database query failed:', err);
-    res.status(500).json({ error: 'Database query failed' });
+    if (err instanceof ZodError) {
+      res.status(400).json({ error: 'Invalid query parameters', details: err.message });
+    } else {
+      console.error('Database query failed:', err);
+      res.status(500).json({ error: 'Database query failed' });
+    }
   }
 });
 
