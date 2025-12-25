@@ -1,37 +1,32 @@
+/* GPT generated */
 import { Pool, PoolClient, QueryResult } from 'pg';
 import type { PreparedQuery } from '@pgtyped/runtime';
-import dotenv from 'dotenv';
+import * as dotenv from 'dotenv';
 
 dotenv.config();
 
-// -------------------- Инициализация пула --------------------
 if (!process.env.DATABASE_URL) {
-  throw new Error('DATABASE_URL is not set in .env');
+  throw new Error('DATABASE_URL is not set in environment variables');
 }
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  // ssl: { rejectUnauthorized: false }, // если нужно для prod
+  // ssl: { rejectUnauthorized: false },
 });
 
-// Проверка соединения при старте
 pool
   .connect()
   .then((client) => {
-    console.log('Postgres pool connected');
+    console.log('Connected to Database successfully');
     client.release();
   })
   .catch((err) => {
-    console.error('Failed to connect to Postgres', err);
+    console.error('Failed to connect to Database', err);
     process.exit(1);
   });
 
-// -------------------- Типы для раннера --------------------
 type DBExecutor = Pool | PoolClient;
 
-/**
- * Универсальный раннер pgtyped-запросов
- */
 export async function runQuery<P, R>(
   query: PreparedQuery<P, R>,
   params?: P,
@@ -42,9 +37,6 @@ export async function runQuery<P, R>(
   return query.run(params as P, db);
 }
 
-/**
- * Удобный раннер для получения одной строки
- */
 export async function runOne<P, R>(
   query: PreparedQuery<P, R>,
   params?: P,
@@ -67,5 +59,3 @@ export async function runRaw(
   const db = executor ?? pool;
   return db.query(sql, params);
 }
-// -------------------- Экспорт пула на случай транзакций --------------------
-export { pool };
