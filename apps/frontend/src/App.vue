@@ -20,21 +20,26 @@
   </l-map>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { LMap, LTileLayer, LMarker, LPopup, LPolyline } from '@vue-leaflet/vue-leaflet';
-import { CitiesSchema, GetDistanceFromToResultSchema } from '@gis/shared/schemas';
+import {
+  CitiesSchema,
+  GetDistanceFromToResultSchema,
+  type City,
+  type IGetDistanceFromToResult,
+} from '@gis/shared/schemas';
 
 const API_URL = import.meta.env.VITE_API_URL;
 
 /* -------------------- state -------------------- */
 
-const cities = ref([]);
-const distance = ref(null);
+const cities = ref<City[]>([]);
+const distance = ref<IGetDistanceFromToResult | null>(null);
 
 /* -------------------- helpers -------------------- */
 
-const parsePoint = (geometry) => {
+const parsePoint = (geometry: string | null): [number, number] | null => {
   if (!geometry) return null;
 
   // geometry format: "POINT(lon lat)"
@@ -49,11 +54,11 @@ const parsePoint = (geometry) => {
 
 /* -------------------- computed -------------------- */
 
-const polylinePoints = computed(() => {
+const polylinePoints = computed<[number, number][] | null>(() => {
   if (!distance.value || !cities.value.length) return null;
 
-  const from = cities.value.find((c) => c.name === distance.value.city_from);
-  const to = cities.value.find((c) => c.name === distance.value.city_to);
+  const from = cities.value.find((c) => c.name === distance.value!.city_from);
+  const to = cities.value.find((c) => c.name === distance.value!.city_to);
 
   if (!from || !to) return null;
 
