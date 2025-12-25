@@ -1,17 +1,22 @@
 #!/usr/bin/env node
+
+/* 
+  This script runs TypeScript type checks on staged .ts and .vue files.
+  Note: It checks all files included in the corresponding tsconfig, 
+  so it may be slow for large projects.
+*/
+
 import { execSync } from 'child_process';
 import { existsSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import process from 'process';
 
-// Получаем список staged файлов через git
 const stagedFiles = execSync('git diff --cached --name-only', { encoding: 'utf-8' })
   .split('\n')
   .map((f) => f.trim())
   .filter(Boolean)
   .map((f) => resolve(process.cwd(), f));
 
-// Кэш, чтобы не проверять один и тот же пакет несколько раз
 const checkedConfigs = new Set();
 
 function findTsconfig(startDir) {
@@ -40,9 +45,9 @@ for (const file of stagedFiles) {
   if (checkedConfigs.has(tsconfigPath)) continue;
   checkedConfigs.add(tsconfigPath);
 
-  console.log(`Running tsc --noEmit for ${tsconfigPath}`);
+  console.log(`Running vue-tsc --noEmit for ${tsconfigPath}`);
   try {
-    execSync(`npx tsc --noEmit --project "${tsconfigPath}"`, { stdio: 'inherit' });
+    execSync(`npx vue-tsc --noEmit --project "${tsconfigPath}"`, { stdio: 'inherit' });
   } catch {
     console.error(`TypeScript check failed for ${tsconfigPath}`);
     process.exit(1);

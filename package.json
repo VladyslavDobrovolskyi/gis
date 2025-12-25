@@ -42,7 +42,6 @@
   },
   "packageManager": "pnpm@10.15.1",
   "devDependencies": {
-    "typescript": "^5.9.3",
     "@typescript-eslint/eslint-plugin": "^8.50.0",
     "@typescript-eslint/parser": "^8.50.0",
     "eslint": "^9.39.2",
@@ -50,12 +49,14 @@
     "eslint-plugin-prettier": "^5.5.4",
     "eslint-plugin-vue": "^10.6.2",
     "eslint-plugin-zod-openapi": "^2.0.0",
-    "vue-eslint-parser": "^10.2.0",
     "globals": "^16.5.0",
     "husky": "^8.0.0",
     "lint-staged": "^16.2.7",
     "prettier": "^3.7.4",
-    "rimraf": "^6.1.2"
+    "rimraf": "^6.1.2",
+    "typescript": "^5.9.3",
+    "vue-eslint-parser": "^10.2.0",
+    "vue-tsc": "^3.2.1"
   },
   "lint-staged": {
     "*.{ts,vue}": [
