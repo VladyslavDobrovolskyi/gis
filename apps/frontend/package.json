@@ -1,0 +1,33 @@
+{
+  "name": "@gis/frontend",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "pnpm run clean && vite build",
+    "start": "vite preview",
+    "lint": "eslint --ext .ts,.vue src",
+    "lint:fix": "eslint --ext .ts,.vue src --fix",
+    "prettier:check": "pnpm prettier --check **/*.{ts,js,json,html,css,yaml,yml}",
+    "prettier:write": "pnpm prettier --write **/*.{ts,js,json,html,css,yaml,yml} --write",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@gis/shared": "workspace:*",
+    "@vue-leaflet/vue-leaflet": "^0.10.1",
+    "leaflet": "^1.9.4",
+    "vue": "^3.5.24",
+    "vue-leaflet": "^0.1.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.3",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^27.3.0",
+    "vite": "^7.2.4",
+    "vitest": "^4.0.16"
+  }
+}

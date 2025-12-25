@@ -1,0 +1,40 @@
+# Node dependencies
+node_modules/
+**/node_modules/
+
+# PNPM store
+.pnp/
+.pnpm-store/
+
+# Build output
+dist/
+**/dist/
+build/
+**/build/
+
+# Vite cache
+.vite/
+
+# Playwright
+test-results
+playwright-report
+blob-report
+.cache
+.auth
+
+# TypeScript
+*.tsbuildinfo
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+logs/
+*.log
+
+# Environment variables
+.env
+.env.*.local
+
+# Database data
+database/data/

@@ -1,0 +1,20 @@
+{
+  "srcDir": "./",
+  "emitTypes": true,
+  "failOnError": true,
+  "camelCaseColumnNames": false,
+  "db": {
+    "host": "localhost",
+    "port": 5432,
+    "user": "gis_user",
+    "password": "gis_pass",
+    "dbName": "gis_db"
+  },
+  "transforms": [
+    {
+      "mode": "sql",
+      "include": "db/sql/*.sql",
+      "emitTemplate": "db/generated/{{name}}.types.ts"
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "name": "@gis/core",
+  "version": "0.0.0",
+  "engines": {
+    "node": "24.12.0"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r run clean && pnpm -r run build",
+    "start": "pnpm -r start",
+    "lint": "pnpm -r --parallel --continue-on-error lint",
+    "lint:fix": "pnpm -r --parallel run lint:fix",
+    "format": "pnpm prettier --check **/*.{ts,js,json,html,css,yaml,yml}",
+    "format:fix": "pnpm prettier --write **/*.{ts,js,json,html,css,yaml,yml} --write",
+    "check": "pnpm lint && pnpm format",
+    "test": "pnpm -r --parallel run test",
+    "test:watch": "pnpm -r --parallel run test:watch",
+    "e2e": "pnpm --filter @gis/e2e run test",
+    "e2e:headed": "pnpm --filter @gis/e2e run test:headed",
+    "e2e:report": "pnpm --filter @gis/e2e run test:report",
+    "clean": "pnpm --filter @gis/frontend run clean && pnpm --filter @gis/backend run clean",
+    "frontend:dev": "pnpm --filter @gis/frontend dev",
+    "frontend:build": "pnpm --filter @gis/frontend build",
+    "frontend:start": "pnpm --filter @gis/frontend start",
+    "frontend:lint": "pnpm --filter @gis/frontend lint",
+    "frontend:lint:fix": "pnpm --filter @gis/frontend run lint:fix",
+    "frontend:test": "pnpm --filter @gis/frontend run test",
+    "frontend:test:watch": "pnpm --filter @gis/frontend run test:watch",
+    "frontend:clean": "pnpm --filter @gis/frontend run clean",
+    "backend:dev": "pnpm --filter @gis/backend dev",
+    "backend:build": "pnpm --filter @gis/backend build",
+    "backend:start": "pnpm --filter @gis/backend start",
+    "backend:lint": "pnpm --filter @gis/backend lint",
+    "backend:lint:fix": "pnpm --filter @gis/backend run lint:fix",
+    "backend:test": "pnpm --filter @gis/backend run test",
+    "backend:test:watch": "pnpm --filter @gis/backend run test:watch",
+    "backend:clean": "pnpm --filter @gis/backend run clean",
+    "backend:pgtyped": "pnpm --filter @gis/backend run generate:pgtyped",
+    "shared:build": "pnpm --filter @gis/shared run build",
+    "prepare": "husky install"
+  },
+  "packageManager": "pnpm@10.15.1",
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.50.0",
+    "@typescript-eslint/parser": "^8.50.0",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.4",
+    "eslint-plugin-vue": "^10.6.2",
+    "eslint-plugin-zod-openapi": "^2.0.0",
+    "globals": "^16.5.0",
+    "husky": "^8.0.0",
+    "lint-staged": "^16.2.7",
+    "prettier": "^3.7.4",
+    "rimraf": "^6.1.2",
+    "vue-eslint-parser": "^10.2.0"
+  },
+  "lint-staged": {
+    "*.{ts,vue}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{js,css,json,md}": [
+      "prettier --write"
+    ]
+  }
+}
