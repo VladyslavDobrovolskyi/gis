@@ -5,9 +5,9 @@ import {
   GetDistanceFromToResultSchema,
 } from '@gis/shared/schemas';
 
-import { getAllCities } from '../../db/generated/cities.types';
-import { getDistanceFromTo } from '../../db/generated/distance.types';
-import { runQuery, runOne } from '../../db/runner';
+import { getAllCities } from '@generated/cities.types';
+import { getDistanceFromTo } from '@generated/distance.types';
+import { runQuery, runOne } from '@db/runner';
 
 export const citiesRouter = router({
   getAll: publicProcedure
