@@ -5,8 +5,8 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "pnpm run clean && tsc -p tsconfig.build.json",
-    "start": "tsx dist/src/server.js",
+    "build": "pnpm run clean && tsc -p tsconfig.build.json && tsc-alias --resolve-full-paths -p tsconfig.build.json",
+    "start": "node dist/src/server.js",
     "lint": "eslint --ext .ts src",
     "lint:fix": "eslint --ext .ts src --fix",
     "prettier:check": "pnpm prettier --check **/*.{ts,js,json,html,css,yaml,yml}",
