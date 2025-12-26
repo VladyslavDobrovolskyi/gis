@@ -1,13 +1,11 @@
 <template>
   <l-map :zoom="6" :center="[50.45, 30.52]" style="height: 100vh; width: 100%">
-    <!-- Tiles -->
     <l-tile-layer
       url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       attribution="© OpenStreetMap contributors"
     />
 
-    <!-- Markers -->
-    <l-marker v-for="city in cities" :key="city.id" :lat-lng="parsePoint(city.geometry)">
+    <l-marker v-for="city in citiesWithCoords" :key="city.id" :lat-lng="city.coords">
       <l-popup>
         <strong>{{ city.name }}</strong
         ><br />
@@ -15,45 +13,67 @@
       </l-popup>
     </l-marker>
 
-    <!-- Polyline -->
     <l-polyline v-if="polylinePoints" :lat-lngs="polylinePoints" color="red" />
   </l-map>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { LMap, LTileLayer, LMarker, LPopup, LPolyline } from '@vue-leaflet/vue-leaflet';
-import { CitiesSchema, GetDistanceFromToResultSchema } from '@gis/shared/schemas';
-
-const API_URL = import.meta.env.VITE_API_URL;
+import { trpc } from './trpc';
+import type { City, IGetDistanceFromToResult } from '@gis/shared/schemas';
 
 /* -------------------- state -------------------- */
 
-const cities = ref([]);
-const distance = ref(null);
+const cities = ref<City[]>([]);
+const distance = ref<IGetDistanceFromToResult | null>(null);
 
 /* -------------------- helpers -------------------- */
 
-const parsePoint = (geometry) => {
+/**
+ * Парсит строку WKT POINT в массив координат [lat, lon]
+ * Leaflet ожидает [latitude, longitude]
+ */
+const parsePoint = (geometry: string | null): [number, number] | null => {
   if (!geometry) return null;
 
-  // geometry format: "POINT(lon lat)"
   const match = geometry.match(/POINT\(([-\d.]+) ([-\d.]+)\)/);
   if (!match) return null;
 
   const lon = parseFloat(match[1]);
   const lat = parseFloat(match[2]);
 
+  if (isNaN(lat) || isNaN(lon)) return null;
+
   return [lat, lon];
 };
 
 /* -------------------- computed -------------------- */
 
-const polylinePoints = computed(() => {
+/**
+ * Фильтруем города и сразу прикрепляем распарсенные координаты.
+ * Это решает проблему Type 'null' is not assignable to type 'LatLngExpression'.
+ */
+const citiesWithCoords = computed(() => {
+  return (
+    cities.value
+      .map((city) => ({
+        ...city,
+        coords: parsePoint(city.geometry),
+      }))
+      // Используем Type Guard, чтобы TS понимал, что coords больше не null
+      .filter((city): city is typeof city & { coords: [number, number] } => city.coords !== null)
+  );
+});
+
+/**
+ * Вычисляем точки для линии между городами
+ */
+const polylinePoints = computed<[number, number][] | null>(() => {
   if (!distance.value || !cities.value.length) return null;
 
-  const from = cities.value.find((c) => c.name === distance.value.city_from);
-  const to = cities.value.find((c) => c.name === distance.value.city_to);
+  const from = cities.value.find((c) => c.name === distance.value!.city_from);
+  const to = cities.value.find((c) => c.name === distance.value!.city_to);
 
   if (!from || !to) return null;
 
@@ -69,15 +89,16 @@ const polylinePoints = computed(() => {
 
 onMounted(async () => {
   try {
-    const citiesRes = await fetch(`${API_URL}/`);
+    // tRPC автоматически подхватывает типы из бэкенда
+    const [citiesRes, distanceRes] = await Promise.all([
+      trpc.cities.getAll.query(),
+      trpc.cities.distance.query({ from: 'Kyiv', to: 'Lviv' }),
+    ]);
 
-    cities.value = CitiesSchema.parse(await citiesRes.json());
-
-    const distanceRes = await fetch(`${API_URL}/distance?from=Kyiv&to=Lviv`);
-    distance.value = GetDistanceFromToResultSchema.parse(await distanceRes.json());
+    cities.value = citiesRes;
+    distance.value = distanceRes;
   } catch (err) {
-    alert('Error fetching data. See console for details.');
-    console.error('Error fetching data:', err);
+    console.error('tRPC Error:', err);
   }
 });
 </script>

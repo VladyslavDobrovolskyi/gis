@@ -13,21 +13,13 @@
     "prettier:write": "pnpm prettier --write **/*.{ts,js,json,html,css,yaml,yml} --write"
   },
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    },
     "./schemas": {
-      "types": "./dist/schemas/index.d.ts",
+      "import": "./dist/schemas/index.js",
+      "types": "./src/schemas/index.ts",
       "default": "./dist/schemas/index.js"
-    },
-    "./openapi": {
-      "types": "./dist/api/index.d.ts",
-      "default": "./dist/api/index.js"
     }
   },
   "dependencies": {
-    "zod": "^4.0.0",
-    "zod-openapi": "^5.4.5"
+    "zod": "^4.0.0"
   }
 }

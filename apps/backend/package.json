@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "pnpm run clean && tsc -p tsconfig.build.json",
-    "start": "node dist/server.js",
+    "start": "tsx dist/src/server.js",
     "lint": "eslint --ext .ts src",
     "lint:fix": "eslint --ext .ts src --fix",
     "prettier:check": "pnpm prettier --check **/*.{ts,js,json,html,css,yaml,yml}",
@@ -20,6 +20,7 @@
   "packageManager": "pnpm@10.15.1",
   "dependencies": {
     "@gis/shared": "workspace:*",
+    "@trpc/server": "^11.8.1",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
@@ -38,8 +39,15 @@
     "@types/pg": "^8.16.0",
     "@types/swagger-ui-express": "^4.1.8",
     "jest": "^30.2.0",
+    "trpc-to-openapi": "^3.1.0",
     "ts-jest": "^29.4.6",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/_router.ts",
+      "default": "./src/_router.ts"
+    }
   }
 }
