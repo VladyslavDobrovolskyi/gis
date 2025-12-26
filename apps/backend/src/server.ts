@@ -1,19 +1,16 @@
-// backend/server.ts
-import express from 'express';
 import cors from 'cors';
+import express from 'express';
 import { createExpressMiddleware } from '@trpc/server/adapters/express';
 import { createOpenApiExpressMiddleware } from 'trpc-to-openapi';
-
 import { setupSwagger } from '@docs/swagger';
-
-import { appRouter } from './router';
+import { appRouter } from './_router';
 
 const app = express();
 
 app.use(cors({ origin: process.env.FRONTEND_URL }));
 
 setupSwagger(app);
-// tRPC JSON API
+
 app.use(
   '/trpc',
   createExpressMiddleware({
@@ -21,7 +18,6 @@ app.use(
   }),
 );
 
-// OpenAPI REST
 app.use(
   '/',
   createOpenApiExpressMiddleware({
@@ -29,6 +25,6 @@ app.use(
   }),
 );
 
-app.listen(3000, () => {
-  console.log('Server on http://localhost:3000');
+app.listen(Number(process.env.API_PORT), () => {
+  console.log(`Server on ${process.env.API_URL}:${process.env.API_PORT} is started successfully!`);
 });

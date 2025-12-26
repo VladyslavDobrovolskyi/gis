@@ -1,13 +1,13 @@
-import { router, publicProcedure } from '@trpc';
+import { router, publicProcedure } from '../trpc';
 import {
   CitiesSchema,
   GetDistanceFromToParamsSchema,
   GetDistanceFromToResultSchema,
 } from '@gis/shared/schemas';
 
-import { getAllCities } from '@generated/cities.types';
-import { getDistanceFromTo } from '@generated/distance.types';
-import { runQuery, runOne } from '@db/runner';
+import { getAllCities } from '../../db/generated/cities.types';
+import { getDistanceFromTo } from '../../db/generated/distance.types';
+import { runQuery, runOne } from '../../db/runner';
 
 export const citiesRouter = router({
   getAll: publicProcedure

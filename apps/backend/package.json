@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "pnpm run clean && tsc -p tsconfig.build.json",
-    "start": "node dist/server.js",
+    "start": "tsx dist/src/server.js",
     "lint": "eslint --ext .ts src",
     "lint:fix": "eslint --ext .ts src --fix",
     "prettier:check": "pnpm prettier --check **/*.{ts,js,json,html,css,yaml,yml}",
@@ -43,5 +43,11 @@
     "ts-jest": "^29.4.6",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/_router.ts",
+      "default": "./src/_router.ts"
+    }
   }
 }

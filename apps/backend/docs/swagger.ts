@@ -1,12 +1,14 @@
 import swaggerUi from 'swagger-ui-express';
 import { generateOpenApiDocument } from 'trpc-to-openapi';
-import { appRouter } from '@/src/router';
-import { Application } from 'express';
+import { appRouter } from '@/_router';
+import { type Application } from 'express';
+import dotenv from 'dotenv';
+dotenv.config();
 
 export const openApiDocument = generateOpenApiDocument(appRouter, {
-  title: 'GIS API',
-  version: '1.0.0',
-  baseUrl: 'http://localhost:3000',
+  title: `${process.env.API_TITLE}`,
+  version: `${process.env.API_VERSION}`,
+  baseUrl: `${process.env.API_URL}:${process.env.API_PORT}`,
 });
 
 export const setupSwagger = (app: Application) => {
