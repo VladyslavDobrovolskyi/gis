@@ -4,7 +4,6 @@ import tsEslint from '@typescript-eslint/eslint-plugin';
 import tsParser from '@typescript-eslint/parser';
 import vueParser from 'vue-eslint-parser';
 import eslintConfigPrettier from 'eslint-config-prettier';
-import pluginZodOpenApi from 'eslint-plugin-zod-openapi';
 
 export default [
   // -----------------------
@@ -84,7 +83,6 @@ export default [
     },
     plugins: {
       '@typescript-eslint': tsEslint,
-      'eslint-plugin-zod-openapi': pluginZodOpenApi,
     },
     rules: {
       ...tsEslint.configs.recommended.rules,
