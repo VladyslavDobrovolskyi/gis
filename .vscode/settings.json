@@ -1,0 +1,17 @@
+{
+  "github.copilot.chat.commitMessageGeneration.instructions": [
+    {
+      "text": [
+        "Generate commit messages strictly in the format: @scope/type: Description.",
+        "Type must be one of present in scripts/commit-msg.js.",
+        "Scope should be inferred from the changed files (e.g., @backend, @frontend, @shared, or @global for root changes or generate name using context",
+        "Example: @backend/feat: Add new authentication API",
+        "Example: @frontend/fix: Resolve layout issue in login page",
+        "Example: @global/docs: Update README with setup instructions",
+        "Example: @shared/refactor: Improve utility functions for better performance",
+        "Example: @todo/fix: Add note about pending tasks in project documentation"
+      ],
+      "file": "scripts/commit-msg.js"
+    }
+  ]
+}
