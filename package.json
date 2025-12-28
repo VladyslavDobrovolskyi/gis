@@ -58,7 +58,9 @@
     "tsc-alias": "^1.8.16",
     "typescript": "^5.9.3",
     "vue-eslint-parser": "^10.2.0",
-    "vue-tsc": "^3.2.1"
+    "vue-tsc": "^3.2.1",
+    "@upstash/context7-mcp": "^1.0.33",
+    "@playwright/mcp": "^0.0.53"
   },
   "lint-staged": {
     "*.{ts,vue}": [
