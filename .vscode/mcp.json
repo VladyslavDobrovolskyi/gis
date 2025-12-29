@@ -9,6 +9,15 @@
       "command": "npx",
       "type": "stdio",
       "args": ["-y", "@upstash/context7-mcp"]
+    },
+    "@devtools/mcp": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--autoConnect",
+        "--browser-url=http://127.0.0.1:9222"
+      ]
     }
   }
 }

@@ -39,12 +39,16 @@
     "backend:test:watch": "pnpm --filter @gis/backend run test:watch",
     "backend:clean": "pnpm --filter @gis/backend run clean",
     "backend:pgtyped": "pnpm --filter @gis/backend run generate:pgtyped",
-    "prepare": "husky install"
+    "prepare": "husky install",
+    "devtools": "node scripts/open-chrome.cjs"
   },
   "packageManager": "pnpm@10.15.1",
   "devDependencies": {
+    "@playwright/mcp": "^0.0.53",
     "@typescript-eslint/eslint-plugin": "^8.50.0",
     "@typescript-eslint/parser": "^8.50.0",
+    "@upstash/context7-mcp": "^1.0.33",
+    "chrome-devtools-mcp": "^0.12.1",
     "concurrently": "^9.2.1",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
@@ -58,9 +62,7 @@
     "tsc-alias": "^1.8.16",
     "typescript": "^5.9.3",
     "vue-eslint-parser": "^10.2.0",
-    "vue-tsc": "^3.2.1",
-    "@upstash/context7-mcp": "^1.0.33",
-    "@playwright/mcp": "^0.0.53"
+    "vue-tsc": "^3.2.1"
   },
   "lint-staged": {
     "*.{ts,vue}": [

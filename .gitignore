@@ -38,3 +38,6 @@ logs/
 
 # Database data
 database/data/
+
+#Google Chrome 
+chrome-profile
