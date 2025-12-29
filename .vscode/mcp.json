@@ -18,6 +18,10 @@
         "--autoConnect",
         "--browser-url=http://127.0.0.1:9222"
       ]
+    },
+    "@dbhub/mcp": {
+      "type": "http",
+      "url": "http://127.0.0.1:5430/mcp"
     }
   }
 }
