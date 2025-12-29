@@ -1,0 +1,202 @@
+{
+  "main": {
+    "id": "20325c695f6cd063",
+    "type": "split",
+    "children": [
+      {
+        "id": "09b9b7f85bf6f9bf",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "a692cef8faa87492",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "Backend API Reference.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "Backend API Reference"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "95523f9c893036d3",
+    "type": "split",
+    "children": [
+      {
+        "id": "151bdd165fc03340",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "38b7e41ca800bf0b",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "2c2d4d63a3da31cf",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "4e664eb7edee8cfc",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "383385c7478720e9",
+    "type": "split",
+    "children": [
+      {
+        "id": "7c4abfc1ee450e62",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "aaed6b4895be5aef",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "API Documentation (Backend).md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for API Documentation (Backend)"
+            }
+          },
+          {
+            "id": "38729802b7d8007e",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "API Documentation (Backend).md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from API Documentation (Backend)"
+            }
+          },
+          {
+            "id": "97963b97b50eb26b",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "6bb7c63e4e391bf6",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "c7efc761b1a00efb",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "API Documentation (Backend).md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of API Documentation (Backend)"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "a692cef8faa87492",
+  "lastOpenFiles": [
+    "Backend Database.md",
+    "Backend Deployment.md",
+    "Backend Overview.md",
+    "Backend Quick Start.md",
+    "Backend Architecture.md",
+    "Backend Troubleshooting.md",
+    "Backend Testing.md",
+    "Backend Authentication.md",
+    "Backend API Reference.md",
+    "Backend API Documentation.md",
+    "API Documentation (Backend).md",
+    "DEVELOPMENT.md",
+    "api.md"
+  ]
+}
