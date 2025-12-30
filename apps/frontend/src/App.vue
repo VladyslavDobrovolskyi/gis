@@ -9,10 +9,17 @@
 
     <l-polygon
       v-for="country in countriesWithCoords"
-      :key="country.id"
+      :key="'country-' + country.id"
       :lat-lngs="country.coords"
       color="green"
       :fill-opacity="0.15"
+    />
+    <l-polygon
+      v-for="city in citiesWithPolygonCoords"
+      :key="'city-' + city.id"
+      :lat-lngs="city.geometry"
+      color="blue"
+      :fill-opacity="0.25"
     />
   </l-map>
 </template>
@@ -108,8 +115,17 @@ const citiesWithCoords = computed(() => {
 });
 
 /**
- * Вычисляем точки для линии между городами
+ * Города с полигонами (если geometry - POLYGON или MULTIPOLYGON)
  */
+const citiesWithPolygonCoords = computed(() => {
+  return cities.value
+    .map((city) => ({
+      ...city,
+      geometryParsed: parsePolygon(city.border_geometry),
+    }))
+    .filter((city) => city.geometryParsed.length > 0)
+    .map((city) => ({ ...city, geometry: city.geometryParsed[0] }));
+});
 
 /* -------------------- lifecycle -------------------- */
 
