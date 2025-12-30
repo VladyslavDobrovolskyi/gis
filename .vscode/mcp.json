@@ -18,6 +18,23 @@
         "--autoConnect",
         "--browser-url=http://127.0.0.1:9222"
       ]
+    },
+    "@dbhub/mcp": {
+      "type": "http",
+      "url": "http://127.0.0.1:5430/mcp"
+    },
+    "@obsidian/mcp": {
+      "command": "uvx",
+      "args": ["mcp-obsidian"],
+      "env": {
+        "OBSIDIAN_API_KEY": "f8bae8435db4c1e8845b56d3ae37aa492e0abd8a43662b18214d28d1e35dce97",
+        "OBSIDIAN_HOST": "127.0.0.1",
+        "OBSIDIAN_PORT": "27123"
+      }
+    },
+    "@drawio/mcp": {
+      "command": "npx",
+      "args": ["@next-ai-drawio/mcp-server@latest"]
     }
   }
 }

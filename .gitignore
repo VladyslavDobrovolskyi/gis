@@ -21,6 +21,7 @@ playwright-report
 blob-report
 .cache
 .auth
+.playwright-mcp
 
 # TypeScript
 *.tsbuildinfo
@@ -38,6 +39,7 @@ logs/
 
 # Database data
 database/data/
-
+generated/
 #Google Chrome 
 chrome-profile
+

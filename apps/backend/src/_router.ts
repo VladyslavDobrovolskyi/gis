@@ -1,8 +1,8 @@
 import { router } from './trpc';
-import { citiesRouter } from './routers/cities.router';
+import { geoRouter } from './routers/geo.router';
 
 export const appRouter = router({
-  cities: citiesRouter,
+  geo: geoRouter,
 });
 
 export type AppRouter = typeof appRouter;

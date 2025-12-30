@@ -1,102 +1,160 @@
 <template>
-  <l-map :zoom="6" :center="[50.45, 30.52]" style="height: 100vh; width: 100%">
+  <l-map ref="mapRef" :zoom="6" :center="[50.45, 30.52]" style="height: 100vh; width: 100%">
     <l-tile-layer
       url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       attribution="© OpenStreetMap contributors"
     />
 
-    <l-marker v-for="city in citiesWithCoords" :key="city.id" :lat-lng="city.coords">
-      <l-popup>
-        <strong>{{ city.name }}</strong
-        ><br />
-        Population: {{ city.population }}
-      </l-popup>
-    </l-marker>
+    <!-- Markers will be added via markercluster in onMounted -->
 
-    <l-polyline v-if="polylinePoints" :lat-lngs="polylinePoints" color="red" />
+    <l-polygon
+      v-for="country in countriesWithCoords"
+      :key="'country-' + country.id"
+      :lat-lngs="country.coords"
+      color="green"
+      :fill-opacity="0.15"
+    />
+    <l-polygon
+      v-for="city in citiesWithPolygonCoords"
+      :key="'city-' + city.id"
+      :lat-lngs="city.geometry"
+      color="blue"
+      :fill-opacity="0.25"
+    />
   </l-map>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
-import { LMap, LTileLayer, LMarker, LPopup, LPolyline } from '@vue-leaflet/vue-leaflet';
+import { ref, computed, onMounted, nextTick } from 'vue';
+import { LMap, LTileLayer, LPolygon } from '@vue-leaflet/vue-leaflet';
 import { trpc } from './trpc';
-import type { City, IGetDistanceFromToResult } from '@gis/shared/schemas';
+import type { GeoCity, GeoCountry } from '@gis/shared/schemas';
+
+import L from 'leaflet';
+import 'leaflet.markercluster';
+
+const greenIcon = new L.Icon({
+  iconUrl:
+    'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41],
+});
+
+const mapRef = ref<InstanceType<typeof LMap> | null>(null);
+let markerClusterGroup: L.MarkerClusterGroup | null = null;
 
 /* -------------------- state -------------------- */
 
-const cities = ref<City[]>([]);
-const distance = ref<IGetDistanceFromToResult | null>(null);
-
-/* -------------------- helpers -------------------- */
-
+const cities = ref<GeoCity[]>([]);
+const countries = ref<GeoCountry[]>([]);
 /**
- * Парсит строку WKT POINT в массив координат [lat, lon]
- * Leaflet ожидает [latitude, longitude]
+ * Парсит строку WKT MULTIPOLYGON в массив массивов координат [[lat, lon], ...]
+ * Поддерживает только MULTIPOLYGON ((()))
  */
-const parsePoint = (geometry: string | null): [number, number] | null => {
-  if (!geometry) return null;
-
-  const match = geometry.match(/POINT\(([-\d.]+) ([-\d.]+)\)/);
-  if (!match) return null;
-
-  const lon = parseFloat(match[1]);
-  const lat = parseFloat(match[2]);
-
-  if (isNaN(lat) || isNaN(lon)) return null;
-
-  return [lat, lon];
+const parsePolygon = (geometry: string | null): [number, number][][] => {
+  if (!geometry) return [];
+  const multiPolyMatch = geometry.match(/^MULTIPOLYGON ?\(\(\((.+)\)\)\)$/);
+  if (multiPolyMatch) {
+    const coordsStr = multiPolyMatch[1];
+    const points = coordsStr.split(',').map((pt) => {
+      const [lon, lat] = pt.trim().split(' ').map(Number);
+      return [lat, lon] as [number, number];
+    });
+    return [points];
+  }
+  const polyMatch = geometry.match(/^POLYGON ?\(\((.+)\)\)$/);
+  if (polyMatch) {
+    const coordsStr = polyMatch[1];
+    const points = coordsStr.split(',').map((pt) => {
+      const [lon, lat] = pt.trim().split(' ').map(Number);
+      return [lat, lon] as [number, number];
+    });
+    return [points];
+  }
+  return [];
 };
-
 /* -------------------- computed -------------------- */
 
 /**
  * Фильтруем города и сразу прикрепляем распарсенные координаты.
  * Это решает проблему Type 'null' is not assignable to type 'LatLngExpression'.
  */
+
+const countriesWithCoords = computed(() => {
+  return countries.value
+    .map((c) => ({
+      ...c,
+      // LPolygon expects coords: LatLngExpression[] (array of [lat, lng])
+      coords: parsePolygon(c.geometry)[0] || [],
+    }))
+    .filter((c) => c.coords.length > 0);
+});
+
+const parsePoint = (geometry: string | null): [number, number] | null => {
+  if (!geometry) return null;
+  const match = geometry.match(/^POINT ?\(([-\d.]+) ([-\d.]+)\)$/);
+  if (match) {
+    const lon = Number(match[1]);
+    const lat = Number(match[2]);
+    return [lat, lon];
+  }
+  return null;
+};
+
 const citiesWithCoords = computed(() => {
-  return (
-    cities.value
-      .map((city) => ({
-        ...city,
-        coords: parsePoint(city.geometry),
-      }))
-      // Используем Type Guard, чтобы TS понимал, что coords больше не null
-      .filter((city): city is typeof city & { coords: [number, number] } => city.coords !== null)
-  );
+  return cities.value
+    .map((city) => ({
+      ...city,
+      coords: parsePoint(city.geometry),
+    }))
+    .filter((city) => city.coords !== null)
+    .map((city) => ({ ...city, coords: city.coords as [number, number] }));
 });
 
 /**
- * Вычисляем точки для линии между городами
+ * Города с полигонами (если geometry - POLYGON или MULTIPOLYGON)
  */
-const polylinePoints = computed<[number, number][] | null>(() => {
-  if (!distance.value || !cities.value.length) return null;
-
-  const from = cities.value.find((c) => c.name === distance.value!.city_from);
-  const to = cities.value.find((c) => c.name === distance.value!.city_to);
-
-  if (!from || !to) return null;
-
-  const fromPoint = parsePoint(from.geometry);
-  const toPoint = parsePoint(to.geometry);
-
-  if (!fromPoint || !toPoint) return null;
-
-  return [fromPoint, toPoint];
+const citiesWithPolygonCoords = computed(() => {
+  return cities.value
+    .map((city) => ({
+      ...city,
+      geometryParsed: parsePolygon(city.border_geometry),
+    }))
+    .filter((city) => city.geometryParsed.length > 0)
+    .map((city) => ({ ...city, geometry: city.geometryParsed[0] }));
 });
 
 /* -------------------- lifecycle -------------------- */
 
 onMounted(async () => {
   try {
-    // tRPC автоматически подхватывает типы из бэкенда
-    const [citiesRes, distanceRes] = await Promise.all([
-      trpc.cities.getAll.query(),
-      trpc.cities.distance.query({ from: 'Kyiv', to: 'Lviv' }),
+    const [citiesRes, countriesRes] = await Promise.all([
+      trpc.geo.getCities.query(),
+      trpc.geo.getCountries.query(),
     ]);
-
     cities.value = citiesRes;
-    distance.value = distanceRes;
+    countries.value = countriesRes;
+
+    await nextTick();
+    // Wait for map to be available
+    const mapComponent = mapRef.value;
+    const leafletMap = mapComponent?.leafletObject;
+    if (leafletMap && citiesWithCoords.value.length > 0) {
+      // Remove previous cluster group if exists
+      if (markerClusterGroup) {
+        leafletMap.removeLayer(markerClusterGroup);
+      }
+      markerClusterGroup = L.markerClusterGroup();
+      citiesWithCoords.value.forEach((city) => {
+        const marker = L.marker(city.coords, { icon: greenIcon });
+        marker.bindPopup(`<strong>${city.name}</strong><br/>Population: ${city.population}`);
+        markerClusterGroup!.addLayer(marker);
+      });
+      leafletMap.addLayer(markerClusterGroup);
+    }
   } catch (err) {
     console.error('tRPC Error:', err);
   }
