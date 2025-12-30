@@ -152,18 +152,72 @@ SELECT id,
     )
 FROM country_obj;
 
--- Киев
-WITH city_obj AS (
-    INSERT INTO geo_object (type_id, name)
-    VALUES ((SELECT id FROM geo_object_type WHERE code = 'CITY'), 'Kyiv')
-    RETURNING id
+-- Привязка geo_object к таблице country
+INSERT INTO country (geo_object_id, iso_code)
+SELECT id, 'UA' FROM geo_object WHERE name = 'Ukraine' AND type_id = (SELECT id FROM geo_object_type WHERE code = 'COUNTRY');
+
+
+-- Города: Kyiv, Kharkiv, Odesa, Dnipro, Lviv
+WITH cities AS (
+    INSERT INTO geo_object (type_id, name) VALUES
+        ((SELECT id FROM geo_object_type WHERE code = 'CITY'), 'Kyiv'),
+        ((SELECT id FROM geo_object_type WHERE code = 'CITY'), 'Kharkiv'),
+        ((SELECT id FROM geo_object_type WHERE code = 'CITY'), 'Odesa'),
+        ((SELECT id FROM geo_object_type WHERE code = 'CITY'), 'Dnipro'),
+        ((SELECT id FROM geo_object_type WHERE code = 'CITY'), 'Lviv')
+    RETURNING id, name
+)
+INSERT INTO city (geo_object_id, population)
+SELECT id, CASE name
+    WHEN 'Kyiv' THEN 2884000
+    WHEN 'Kharkiv' THEN 1441000
+    WHEN 'Odesa' THEN 1011000
+    WHEN 'Dnipro' THEN 968000
+    WHEN 'Lviv' THEN 721000
+    ELSE 0 END
+FROM cities;
+
+WITH cities AS (
+    SELECT id, name FROM geo_object WHERE name IN ('Kyiv','Kharkiv','Odesa','Dnipro','Lviv')
 )
 INSERT INTO geo_point (geo_object_id, geom)
-SELECT id, ST_Point(30.5234, 50.4501)
-FROM city_obj;
+SELECT id, CASE name
+    WHEN 'Kyiv' THEN ST_Point(30.5234, 50.4501)
+    WHEN 'Kharkiv' THEN ST_Point(36.2304, 49.9935)
+    WHEN 'Odesa' THEN ST_Point(30.7233, 46.4825)
+    WHEN 'Dnipro' THEN ST_Point(35.0450, 48.4647)
+    WHEN 'Lviv' THEN ST_Point(24.0311, 49.8429)
+    ELSE NULL END
+FROM cities;
 
--- География для Киева
+WITH cities AS (
+    SELECT id, name FROM geo_object WHERE name IN ('Kyiv','Kharkiv','Odesa','Dnipro','Lviv')
+)
 INSERT INTO geo_geography (geo_object_id, geog)
-SELECT id, ST_Point(30.5234, 50.4501)
-FROM geo_object
-WHERE name = 'Kyiv';
+SELECT id, CASE name
+    WHEN 'Kyiv' THEN ST_Point(30.5234, 50.4501)
+    WHEN 'Kharkiv' THEN ST_Point(36.2304, 49.9935)
+    WHEN 'Odesa' THEN ST_Point(30.7233, 46.4825)
+    WHEN 'Dnipro' THEN ST_Point(35.0450, 48.4647)
+    WHEN 'Lviv' THEN ST_Point(24.0311, 49.8429)
+    ELSE NULL END
+FROM cities;
+
+WITH cities AS (
+    SELECT id, name FROM geo_object WHERE name IN ('Kyiv','Kharkiv','Odesa','Dnipro','Lviv')
+)
+INSERT INTO geo_multipolygon (geo_object_id, geom)
+SELECT id,
+    ST_Multi(
+        ST_GeomFromText(
+            CASE name
+                WHEN 'Kyiv' THEN 'POLYGON((30.35 50.35, 30.80 50.35, 30.80 50.60, 30.35 50.60, 30.35 50.35))'
+                WHEN 'Kharkiv' THEN 'POLYGON((36.10 49.90, 36.36 49.90, 36.36 50.05, 36.10 50.05, 36.10 49.90))'
+                WHEN 'Odesa' THEN 'POLYGON((30.60 46.40, 30.85 46.40, 30.85 46.55, 30.60 46.55, 30.60 46.40))'
+                WHEN 'Dnipro' THEN 'POLYGON((34.95 48.40, 35.15 48.40, 35.15 48.55, 34.95 48.55, 34.95 48.40))'
+                WHEN 'Lviv' THEN 'POLYGON((23.90 49.75, 24.15 49.75, 24.15 49.95, 23.90 49.95, 23.90 49.75))'
+                ELSE NULL END,
+            4326
+        )
+    )
+FROM cities;
