@@ -20,6 +20,7 @@
     "@gis/backend": "workspace:*",
     "@gis/shared": "workspace:*",
     "@tailwindcss/vite": "^4.1.18",
+    "@tanstack/vue-query": "^5.92.5",
     "@trpc/client": "^11.8.1",
     "@vue-leaflet/vue-leaflet": "^0.10.1",
     "@vueuse/core": "^14.1.0",
