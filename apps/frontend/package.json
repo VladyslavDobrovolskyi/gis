@@ -22,6 +22,7 @@
     "@tailwindcss/vite": "^4.1.18",
     "@trpc/client": "^11.8.1",
     "@vue-leaflet/vue-leaflet": "^0.10.1",
+    "@vueuse/core": "^14.1.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "leaflet": "^1.9.4",
