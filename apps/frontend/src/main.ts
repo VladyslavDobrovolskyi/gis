@@ -1,4 +1,5 @@
 import { createApp } from 'vue';
+import { createPinia } from 'pinia';
 import App from './App.vue';
 
 import './style.css';
@@ -13,5 +14,5 @@ L.Icon.Default.mergeOptions({
   iconUrl: icon,
   shadowUrl: iconShadow,
 });
-
-createApp(App).mount('#app');
+const pinia = createPinia();
+createApp(App).use(pinia).mount('#app');
