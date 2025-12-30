@@ -1,1 +1,1 @@
-export * from './city.schema';
+export * from './geo.schema';
