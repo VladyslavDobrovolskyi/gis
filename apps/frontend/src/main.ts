@@ -1,5 +1,6 @@
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
+import { VueQueryPlugin } from '@tanstack/vue-query';
 import App from './App.vue';
 
 import './style.css';
@@ -15,4 +16,5 @@ L.Icon.Default.mergeOptions({
   shadowUrl: iconShadow,
 });
 const pinia = createPinia();
-createApp(App).use(pinia).mount('#app');
+
+createApp(App).use(pinia).use(VueQueryPlugin).mount('#app');
