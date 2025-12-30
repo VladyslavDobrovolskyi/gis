@@ -5,6 +5,7 @@ export const GeoCitySchema = z.object({
   name: z.string().min(1),
   population: z.number().int().nullable(),
   geometry: z.string().nullable(),
+  border_geometry: z.string().nullable(),
 });
 export const GeoCitiesSchema = z.array(GeoCitySchema);
 export type GeoCity = z.infer<typeof GeoCitySchema>;
