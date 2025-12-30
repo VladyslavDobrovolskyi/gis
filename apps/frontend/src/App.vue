@@ -1,22 +1,11 @@
 <template>
-  <l-map :zoom="6" :center="[50.45, 30.52]" style="height: 100vh; width: 100%">
+  <l-map ref="mapRef" :zoom="6" :center="[50.45, 30.52]" style="height: 100vh; width: 100%">
     <l-tile-layer
       url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       attribution="© OpenStreetMap contributors"
     />
 
-    <l-marker
-      v-for="city in citiesWithCoords"
-      :key="city.id"
-      :lat-lng="city.coords"
-      :icon="greenIcon"
-    >
-      <l-popup>
-        <strong>{{ city.name }}</strong
-        ><br />
-        Population: {{ city.population }}
-      </l-popup>
-    </l-marker>
+    <!-- Markers will be added via markercluster in onMounted -->
 
     <l-polygon
       v-for="country in countriesWithCoords"
@@ -29,12 +18,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
-import { LMap, LTileLayer, LMarker, LPopup, LPolygon } from '@vue-leaflet/vue-leaflet';
+import { ref, computed, onMounted, nextTick } from 'vue';
+import { LMap, LTileLayer, LPolygon } from '@vue-leaflet/vue-leaflet';
 import { trpc } from './trpc';
 import type { GeoCity, GeoCountry } from '@gis/shared/schemas';
 
 import L from 'leaflet';
+import 'leaflet.markercluster';
 
 const greenIcon = new L.Icon({
   iconUrl:
@@ -45,6 +35,9 @@ const greenIcon = new L.Icon({
   popupAnchor: [1, -34],
   shadowSize: [41, 41],
 });
+
+const mapRef = ref<InstanceType<typeof LMap> | null>(null);
+let markerClusterGroup: L.MarkerClusterGroup | null = null;
 
 /* -------------------- state -------------------- */
 
@@ -128,6 +121,24 @@ onMounted(async () => {
     ]);
     cities.value = citiesRes;
     countries.value = countriesRes;
+
+    await nextTick();
+    // Wait for map to be available
+    const mapComponent = mapRef.value;
+    const leafletMap = mapComponent?.leafletObject;
+    if (leafletMap && citiesWithCoords.value.length > 0) {
+      // Remove previous cluster group if exists
+      if (markerClusterGroup) {
+        leafletMap.removeLayer(markerClusterGroup);
+      }
+      markerClusterGroup = L.markerClusterGroup();
+      citiesWithCoords.value.forEach((city) => {
+        const marker = L.marker(city.coords, { icon: greenIcon });
+        marker.bindPopup(`<strong>${city.name}</strong><br/>Population: ${city.population}`);
+        markerClusterGroup!.addLayer(marker);
+      });
+      leafletMap.addLayer(markerClusterGroup);
+    }
   } catch (err) {
     console.error('tRPC Error:', err);
   }
