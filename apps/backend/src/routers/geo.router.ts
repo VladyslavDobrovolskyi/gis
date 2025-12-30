@@ -10,7 +10,8 @@ export const geoRouter = router({
         method: 'GET',
         path: '/geo/cities',
         summary: 'Get all cities with geometry',
-        description: 'Возвращает список городов с координатами (WKT POINT) и населением.',
+        description:
+          'Возвращает список городов с координатами (WKT POINT), населением и границами (WKT POLYGON/MULTIPOLYGON) в поле border_geometry.',
       },
     })
     .output(GeoCitiesSchema)
