@@ -17,6 +17,7 @@
     "clean": "rimraf dist"
   },
   "dependencies": {
+    "@geoman-io/leaflet-geoman-free": "^2.19.0",
     "@gis/backend": "workspace:*",
     "@gis/shared": "workspace:*",
     "@tailwindcss/vite": "^4.1.18",
