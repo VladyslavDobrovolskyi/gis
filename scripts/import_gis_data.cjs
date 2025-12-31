@@ -20,15 +20,15 @@ const PG_CONN = `PG:host=${host} port=${port} dbname=${dbname} user=${user} pass
 
 const files = [
   {
-    file: path.resolve(__dirname, '../database/__init__/country.geojson'),
-    table: 'country',
-    geom: 'wkb_geometry',
+    file: path.resolve(__dirname, '../database/__init__/countries.geojson'),
+    table: 'countries',
+    geom: 'geom',
     nlt: 'POLYGON',
   },
   {
     file: path.resolve(__dirname, '../database/__init__/regions.geojson'),
     table: 'regions',
-    geom: 'wkb_geometry',
+    geom: 'geom',
     nlt: 'MULTIPOLYGON',
   },
   {
