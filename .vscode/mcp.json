@@ -35,6 +35,10 @@
     "@drawio/mcp": {
       "command": "npx",
       "args": ["@next-ai-drawio/mcp-server@latest"]
+    },
+    "@qgis/mcp": {
+      "command": "uv",
+      "args": ["--directory", "C:\\Users\\Robot\\qgis-mcp", "run", "qgis_mcp_server.py"]
     }
   }
 }
