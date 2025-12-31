@@ -31,6 +31,7 @@
       color="blue"
       :fill-opacity="0.25"
     />
+    <div v-if="measurementText" class="measurement-badge">{{ measurementText }}</div>
   </l-map>
 </template>
 
@@ -39,7 +40,7 @@ import { ref, computed, nextTick, watch } from 'vue';
 import { LMap, LTileLayer, LPolygon } from '@vue-leaflet/vue-leaflet';
 import { trpc } from './trpc';
 import type { City } from '@gis/shared/schemas';
-import L, { Polyline, Polygon } from 'leaflet';
+import L, { Polyline, Polygon, LeafletEvent } from 'leaflet';
 import { useQuery } from '@tanstack/vue-query';
 import { useDebounceFn } from '@vueuse/core';
 
@@ -202,6 +203,146 @@ const citiesWithPolygonCoords = computed(() =>
     .filter((city) => city.geometry.length > 0),
 );
 
+/* -------------------- Measurement helpers -------------------- */
+
+let currentDrawPoints: L.LatLng[] = [];
+const measurementMode = ref<'distance' | 'area' | null>(null);
+const measurementText = ref<string>('');
+
+type PmLayer = L.Layer & {
+  getLatLngs?: () => unknown;
+  on?: (evt: string, fn: (...args: unknown[]) => void) => void;
+  off?: (evt: string, fn?: (...args: unknown[]) => void) => void;
+};
+
+function formatDistance(m: number) {
+  if (m >= 1000) return `${(m / 1000).toFixed(2)} km`;
+  return `${Math.round(m)} m`;
+}
+function formatArea(m2: number) {
+  if (m2 >= 1_000_000) return `${(m2 / 1_000_000).toFixed(2)} km²`;
+  return `${Math.round(m2)} m²`;
+}
+
+function haversine(a: [number, number], b: [number, number]) {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const [lat1, lon1] = a;
+  const [lat2, lon2] = b;
+  const R = 6371000; // meters
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const s1 =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s1));
+}
+
+function computeLengthLatLngs(points: L.LatLng[]) {
+  let sum = 0;
+  for (let i = 1; i < points.length; i++) {
+    sum += haversine([points[i - 1].lat, points[i - 1].lng], [points[i].lat, points[i].lng]);
+  }
+  return sum;
+}
+
+function projectToMeters(lat: number, lon: number) {
+  const R = 6378137;
+  const x = (R * (lon * Math.PI)) / 180;
+  const y = R * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
+  return [x, y];
+}
+
+function computeAreaLatLngs(points: L.LatLng[]) {
+  if (points.length < 3) return 0;
+  const pts = points.map((p) => projectToMeters(p.lat, p.lng));
+  let sum = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const j = (i + 1) % pts.length;
+    sum += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
+  }
+  return Math.abs(sum / 2);
+}
+
+function updateMeasurementFromPoints(points: L.LatLng[]) {
+  if (!measurementMode.value) return;
+  if (measurementMode.value === 'distance') {
+    const length = computeLengthLatLngs(points);
+    measurementText.value = formatDistance(length);
+  } else if (measurementMode.value === 'area') {
+    const area = computeAreaLatLngs(points);
+    measurementText.value = formatArea(area);
+  }
+}
+
+function onDrawVertex(e: { latlng?: L.LatLng }) {
+  if (!e || !e.latlng) return;
+  currentDrawPoints.push(e.latlng);
+  updateMeasurementFromPoints(currentDrawPoints);
+}
+
+function onMouseMoveDuringDraw(e: L.LeafletMouseEvent) {
+  if (!currentDrawPoints.length) return;
+  const preview = [...currentDrawPoints, e.latlng];
+  updateMeasurementFromPoints(preview);
+}
+
+function startDrawMode(shape: string) {
+  currentDrawPoints = [];
+  const s = (shape || '').toLowerCase();
+  if (s.includes('line') || s.includes('polyline')) {
+    measurementMode.value = 'distance';
+  } else if (s.includes('polygon') || s.includes('rectangle') || s.includes('circle')) {
+    measurementMode.value = 'area';
+  } else {
+    measurementMode.value = null;
+  }
+  if (measurementMode.value === 'distance') {
+    measurementText.value = formatDistance(0);
+  } else if (measurementMode.value === 'area') {
+    measurementText.value = formatArea(0);
+  } else {
+    measurementText.value = '';
+  }
+  const map = mapRef.value?.leafletObject as L.Map | undefined;
+  if (!measurementMode.value || !map) return;
+  map.on('pm:drawvertex', onDrawVertex as (ev: unknown) => void);
+  map.on('mousemove', onMouseMoveDuringDraw as (ev: L.LeafletMouseEvent) => void);
+}
+
+function stopDrawMode() {
+  const map = mapRef.value?.leafletObject as L.Map | undefined;
+  if (map) {
+    map.off('pm:drawvertex', onDrawVertex as (ev: unknown) => void);
+    map.off('mousemove', onMouseMoveDuringDraw as (ev: L.LeafletMouseEvent) => void);
+  }
+  measurementMode.value = null;
+  currentDrawPoints = [];
+  setTimeout(() => (measurementText.value = ''), 3000);
+}
+
+function attachEditListeners(layer: PmLayer) {
+  measurementMode.value =
+    layer instanceof L.Polygon ? 'area' : layer instanceof L.Polyline ? 'distance' : null;
+  if (!measurementMode.value) return;
+  const update = () => {
+    const ll = typeof layer.getLatLngs === 'function' ? (layer.getLatLngs!() as unknown) : [];
+    const pts: L.LatLng[] = ([] as L.LatLng[]).concat(...(ll as unknown as L.LatLng[][]));
+    updateMeasurementFromPoints(pts);
+  };
+  if (layer.on) layer.on('pm:edit', update);
+  if (layer.on) layer.on('pm:dragend', update);
+  if (layer.on) layer.on('pm:update', update);
+  update();
+}
+
+function detachEditListeners(layer: PmLayer) {
+  if (!layer) return;
+  if (layer.off) layer.off('pm:edit');
+  if (layer.off) layer.off('pm:dragend');
+  if (layer.off) layer.off('pm:update');
+  measurementText.value = '';
+}
+
 /* -------------------- Map init -------------------- */
 
 const initMap = useDebounceFn(async () => {
@@ -292,6 +433,53 @@ const initMap = useDebounceFn(async () => {
     setMapInteractivity(true);
   });
 
+  // Measurement wiring: call top-level helper functions that manage measurements
+  const mapEvents = leafletMap as L.Map;
+  type GeomanEvent = LeafletEvent & { shape?: string; layer?: unknown; latlng?: L.LatLng };
+
+  mapEvents.on('pm:drawstart', (e: GeomanEvent) => {
+    const shape = (e?.shape as string) ?? '';
+    startDrawMode(shape);
+    setMapInteractivity(false);
+  });
+  mapEvents.on('pm:drawvertex', (e: GeomanEvent) => onDrawVertex(e));
+  mapEvents.on('pm:drawend', () => {
+    stopDrawMode();
+    setMapInteractivity(true);
+  });
+  mapEvents.on('pm:create', (e: GeomanEvent) => {
+    stopDrawMode();
+    try {
+      const layer = e.layer as unknown as PmLayer;
+      if (layer && typeof layer.getLatLngs === 'function') {
+        const ll = layer.getLatLngs!() as unknown;
+        const pts: L.LatLng[] = ([] as L.LatLng[]).concat(...(ll as unknown as L.LatLng[][]));
+        if (layer instanceof L.Polygon) {
+          measurementMode.value = 'area';
+          measurementText.value = formatArea(computeAreaLatLngs(pts));
+        } else if (layer instanceof L.Polyline) {
+          measurementMode.value = 'distance';
+          measurementText.value = formatDistance(computeLengthLatLngs(pts));
+        }
+        setTimeout(() => (measurementText.value = ''), 3000);
+      }
+    } catch {
+      // ignore
+    }
+    setMapInteractivity(true);
+  });
+  mapEvents.on('pm:editstart', (e: GeomanEvent) => {
+    const layer = e?.layer as unknown as PmLayer | undefined;
+    if (layer) attachEditListeners(layer);
+    setMapInteractivity(false);
+  });
+  mapEvents.on('pm:editend', (e: GeomanEvent) => {
+    const layer = e?.layer as unknown as PmLayer | undefined;
+    if (layer) detachEditListeners(layer);
+    measurementText.value = '';
+    setMapInteractivity(true);
+  });
+
   // Marker clustering
   if (citiesWithCoords.value.length) {
     if (markerClusterGroup) {
@@ -309,7 +497,6 @@ const initMap = useDebounceFn(async () => {
     leafletMap.addLayer(markerClusterGroup);
   }
 }, 150);
-
 watch([citiesWithCoords, countriesWithCoords, regionsWithCoords], () => initMap());
 </script>
 
@@ -368,5 +555,20 @@ watch([citiesWithCoords, countriesWithCoords, regionsWithCoords], () => initMap(
   .leaflet-pm-toolbar .leaflet-pm-container {
     gap: 8px !important;
   }
+}
+.measurement-badge {
+  position: fixed;
+  right: 12px;
+  top: 12px;
+  background: rgba(0, 0, 0, 0.72);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-weight: 600;
+  z-index: 2000;
+}
+
+.leaflet-pm-toolbar {
+  z-index: 1000 !important;
 }
 </style>
