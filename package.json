@@ -41,7 +41,9 @@
     "backend:pgtyped": "pnpm --filter @gis/backend run generate:pgtyped",
     "prepare": "husky install",
     "devtools": "node scripts/open-chrome.cjs",
-    "dbhub": "node scripts/dbhub.cjs"
+    "dbhub": "node scripts/dbhub.cjs",
+    "database:recreate": "rimraf ./database/data && docker compose up -d --build",
+    "database:seed": "node scripts/import_gis_data.cjs"
   },
   "packageManager": "pnpm@10.26.2",
   "devDependencies": {
