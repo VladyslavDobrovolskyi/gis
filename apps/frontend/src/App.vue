@@ -123,6 +123,10 @@ interface PMAttachable {
     disable?: () => void;
   };
 }
+
+// Combined typed alias for layers that are drawn and PM-attachable with optional options
+type DrawnPmLayer = DrawnLayer & PMAttachable & { options?: Record<string, unknown> };
+
 interface GeomanPM {
   setLang?(lang: string): void;
   addControls?(opts: {
@@ -394,22 +398,216 @@ function stopDrawMode(): void {
 }
 
 function attachEditListeners(layer: PmLayer): void {
-  measurementMode.value =
-    layer instanceof L.Polygon ? 'area' : layer instanceof L.Polyline ? 'distance' : null;
+  // support polygons, polylines and circles
+  if (layer instanceof L.Circle) {
+    measurementMode.value = 'area';
+  } else {
+    measurementMode.value =
+      layer instanceof L.Polygon ? 'area' : layer instanceof L.Polyline ? 'distance' : null;
+  }
   if (!measurementMode.value) return;
+
   const update = (): void => {
-    if (typeof layer.getLatLngs === 'function') {
-      const ll = layer.getLatLngs() as unknown;
-      const pts: L.LatLng[] = ([] as L.LatLng[]).concat(...(ll as unknown as L.LatLng[][]));
-      updateMeasurementFromPoints(pts);
+    try {
+      if (layer instanceof L.Circle) {
+        const r = (layer as L.Circle).getRadius(); // meters
+        const area = Math.PI * r * r;
+        measurementText.value = `${formatDistance(r)} • ${formatArea(area)}`;
+        return;
+      }
+      if (typeof layer.getLatLngs === 'function') {
+        const ll = layer.getLatLngs() as unknown;
+        const pts: L.LatLng[] = ([] as L.LatLng[]).concat(...(ll as unknown as L.LatLng[][]));
+        updateMeasurementFromPoints(pts);
+      }
+    } catch {
+      /* ignore */
     }
   };
+
   if (layer.on) layer.on('pm:edit', update);
   if (layer.on) layer.on('pm:dragend', update);
   if (layer.on) layer.on('pm:update', update);
   update();
 }
 
+// Hover listeners: show measurement badge when cursor is over a drawn layer
+// track last mouse position to avoid clearing on hover between layers (e.g., marker overlays)
+let lastMouseX = 0;
+let lastMouseY = 0;
+function mouseMoveHandler(e: MouseEvent) {
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
+}
+try {
+  document.addEventListener('mousemove', mouseMoveHandler);
+} catch {
+  // ignore
+}
+// remove on unmount
+onBeforeUnmount(() => {
+  try {
+    document.removeEventListener('mousemove', mouseMoveHandler);
+  } catch {}
+});
+
+// Debounce/ownership to handle fast mouse transitions between layers
+let hoverClearTimer: number | null = null;
+let hoverActiveLayer: L.Layer | null = null;
+
+const hoverAttached = new WeakMap<
+  L.Layer,
+  { onOver?: (e: L.LeafletMouseEvent) => void; onOut?: (e: L.LeafletMouseEvent) => void }
+>();
+
+function attachHoverListeners(layer: L.Layer | null | undefined): void {
+  if (!layer) return;
+  const maybe = layer as L.Layer & {
+    __hoverAttached?: boolean;
+    eachLayer?: (fn: (l: L.Layer) => void) => void;
+  };
+  if (maybe.__hoverAttached) return;
+  maybe.__hoverAttached = true;
+
+  const owner = maybe;
+  const onOver = (e?: L.LeafletMouseEvent) => {
+    try {
+      // cancel any pending clear and mark this layer as active
+      if (hoverClearTimer) {
+        window.clearTimeout(hoverClearTimer);
+        hoverClearTimer = null;
+      }
+      hoverActiveLayer = owner;
+
+      const target = (e && (e.target as L.Layer)) ?? maybe;
+      const l = target as PmLayer & DrawnLayer;
+      if (!l) return;
+
+      // Circles don't provide getLatLngs — handle them first
+      if (l instanceof L.Circle) {
+        measurementMode.value = 'area';
+        const r = (l as L.Circle).getRadius();
+        const area = Math.PI * r * r;
+        measurementText.value = `${formatDistance(r)} • ${formatArea(area)}`;
+        return;
+      }
+
+      if (typeof l.getLatLngs !== 'function') return;
+      const ll = l.getLatLngs() as unknown;
+      const pts: L.LatLng[] = ([] as L.LatLng[]).concat(...(ll as unknown as L.LatLng[][]));
+      if (l instanceof L.Polygon) {
+        measurementMode.value = 'area';
+        measurementText.value = formatArea(computeAreaLatLngs(pts));
+      } else if (l instanceof L.Polyline) {
+        measurementMode.value = 'distance';
+        measurementText.value = formatDistance(computeLengthLatLngs(pts));
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+  const onOut = () => {
+    // schedule a clear; cancelable if another layer's onOver fires
+    if (hoverClearTimer) window.clearTimeout(hoverClearTimer);
+    const ownerLayer = maybe;
+    hoverClearTimer = window.setTimeout(() => {
+      try {
+        // if hover moved to another attached layer, don't clear
+        if (hoverActiveLayer && hoverActiveLayer !== ownerLayer) return;
+
+        const el = document.elementFromPoint(lastMouseX, lastMouseY) as HTMLElement | null;
+        if (el) {
+          let cur: HTMLElement | null = el;
+          while (cur) {
+            const cls = (cur.className || '') as string;
+            if (
+              cls.includes &&
+              (cls.includes('leaflet-marker-icon') || cls.includes('leaflet-interactive'))
+            ) {
+              // still over a leaflet vector or marker — keep measurement
+              return;
+            }
+            cur = cur.parentElement;
+          }
+        }
+      } catch {
+        // ignore and clear
+      }
+      // proceed to clear
+      hoverActiveLayer = null;
+      measurementText.value = '';
+      measurementMode.value = null;
+      hoverClearTimer = null;
+    }, 160);
+  };
+
+  // attach to this layer
+  try {
+    const pmLayer = maybe as PmLayer;
+    if (pmLayer.on) pmLayer.on('mouseover', onOver as (ev?: L.LeafletMouseEvent) => void);
+    if (pmLayer.on) pmLayer.on('mouseout', onOut as (ev?: L.LeafletMouseEvent) => void);
+  } catch {
+    // ignore
+  }
+
+  // also attach to sublayers if present
+  if (typeof maybe.eachLayer === 'function') {
+    try {
+      maybe.eachLayer!((sub) => {
+        try {
+          const s = sub as L.Layer & { __hoverAttached?: boolean } & PmLayer;
+          if (s.__hoverAttached) return;
+          s.__hoverAttached = true;
+          if (s.on) s.on('mouseover', onOver as (ev?: L.LeafletMouseEvent) => void);
+          if (s.on) s.on('mouseout', onOut as (ev?: L.LeafletMouseEvent) => void);
+        } catch {
+          /* ignore */
+        }
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+  hoverAttached.set(maybe, { onOver, onOut });
+}
+
+function detachHoverListeners(layer: L.Layer | null | undefined): void {
+  if (!layer) return;
+  const maybe = layer as L.Layer & {
+    __hoverAttached?: boolean;
+    eachLayer?: (fn: (l: L.Layer) => void) => void;
+  } & PmLayer;
+  const h = hoverAttached.get(maybe);
+  if (h && maybe.off) {
+    try {
+      if (h.onOver && maybe.off)
+        maybe.off('mouseover', h.onOver as (ev?: L.LeafletMouseEvent) => void);
+      if (h.onOut && maybe.off)
+        maybe.off('mouseout', h.onOut as (ev?: L.LeafletMouseEvent) => void);
+    } catch {
+      /* ignore */
+    }
+  }
+  hoverAttached.delete(maybe);
+  maybe.__hoverAttached = false;
+  // if this layer was the active hover, clear the ownership and any pending timer
+  try {
+    if (hoverActiveLayer === maybe) hoverActiveLayer = null;
+    if (hoverClearTimer) {
+      window.clearTimeout(hoverClearTimer);
+      hoverClearTimer = null;
+    }
+  } catch {}
+  if (typeof maybe.eachLayer === 'function') {
+    try {
+      maybe.eachLayer!((sub) => {
+        try {
+          (sub as L.Layer & { __hoverAttached?: boolean }).__hoverAttached = false;
+        } catch {}
+      });
+    } catch {}
+  }
+}
 function detachEditListeners(layer: PmLayer) {
   if (!layer) return;
   if (layer.off) layer.off('pm:edit');
@@ -625,10 +823,19 @@ function deleteLayerImmediate(target: L.Layer, isGroup = false, ev?: L.LeafletMo
   showDeleteBubble(target, isGroup, ev, 180);
 
   try {
+    // detach hover listeners before removal
+    try {
+      detachHoverListeners(target as L.Layer);
+    } catch {}
+
     if (isGroup && typeof (target as LayerWithEach).eachLayer === 'function') {
       try {
         (target as LayerWithEach).eachLayer!((sub: L.Layer) => {
           try {
+            // detach hover listeners for sublayers
+            try {
+              detachHoverListeners(sub);
+            } catch {}
             if (map.hasLayer(sub)) map.removeLayer(sub);
           } catch {
             /* ignore */
@@ -640,11 +847,26 @@ function deleteLayerImmediate(target: L.Layer, isGroup = false, ev?: L.LeafletMo
     } else {
       try {
         const t = target as L.Layer;
+        try {
+          detachHoverListeners(t);
+        } catch {}
         if (map.hasLayer(t)) map.removeLayer(t);
       } catch {
         /* ignore */
       }
     }
+
+    // clear any hover/measurement state immediately
+    try {
+      if (hoverClearTimer) {
+        window.clearTimeout(hoverClearTimer);
+        hoverClearTimer = null;
+      }
+      hoverActiveLayer = null;
+      measurementText.value = '';
+      measurementMode.value = null;
+    } catch {}
+
     persistAllDrawnLayers(map);
   } catch {
     /* ignore */
@@ -895,7 +1117,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
           ) {
             (layer as L.Layer & { eachLayer?: (fn: (l: L.Layer) => void) => void }).eachLayer!(
               (sub: L.Layer) => {
-                const s = sub as DrawnLayer & PMAttachable & { options?: Record<string, unknown> };
+                const s = sub as DrawnPmLayer;
                 s.drawnId = idFromFeature ?? s.drawnId ?? generateDrawnId();
                 s.options = s.options || {};
                 (s.options as Record<string, unknown>).pmIgnore = false;
@@ -908,6 +1130,8 @@ const initMap = useDebounceFn(async (): Promise<void> => {
                 }
                 // attach right-click-to-delete handler to restored sublayer
                 attachContextDelete(sub);
+                // show measurements on hover
+                attachHoverListeners(sub);
               },
             );
           } else {
@@ -925,6 +1149,8 @@ const initMap = useDebounceFn(async (): Promise<void> => {
             }
             // attach right-click-to-delete handler to restored layer
             attachContextDelete(layer);
+            // show measurements on hover
+            attachHoverListeners(layer);
           }
         } catch {
           // ignore
@@ -1019,6 +1245,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
           document.querySelector('.leaflet-pm-toolbar') ||
           document.querySelector('.leaflet-buttons');
         if (!toolbar) return;
+
         // remove rotate icon elements and their containers
         toolbar
           .querySelectorAll('.leaflet-pm-icon-rotate, .control-icon.leaflet-pm-icon-rotate')
@@ -1028,18 +1255,49 @@ const initMap = useDebounceFn(async (): Promise<void> => {
             if (container) container.remove();
             else (el as HTMLElement).remove();
           });
-        // remove any button containers whose title contains "поворот" (case-insensitive)
+
+        // Also remove eraser / removal controls (best-effort): look for common icon classes and titles
+        toolbar
+          .querySelectorAll(
+            '.leaflet-pm-icon-remove, .leaflet-pm-icon-delete, .leaflet-pm-icon-trash, .leaflet-pm-icon-removal, .control-icon.leaflet-pm-icon-remove',
+          )
+          .forEach((el) => {
+            const container =
+              (el as HTMLElement).closest('.button-container') || (el as HTMLElement).parentElement;
+            if (container) container.remove();
+            else (el as HTMLElement).remove();
+          });
+
+        // remove any button containers whose title contains rotate or delete keywords (case-insensitive)
         toolbar.querySelectorAll('.button-container').forEach((el) => {
           try {
             const title = (el as HTMLElement).getAttribute('title') || '';
-            if (title.toLowerCase().includes('поворот')) (el as HTMLElement).remove();
+            const t = title.toLowerCase();
+            if (
+              t.includes('поворот') ||
+              t.includes('удал') ||
+              t.includes('удалить') ||
+              t.includes('remove') ||
+              t.includes('delete') ||
+              t.includes('trash')
+            )
+              (el as HTMLElement).remove();
           } catch {}
         });
-        // remove individual actions with a rotate title
+
+        // remove individual actions with rotate/delete titles
         toolbar.querySelectorAll('.leaflet-pm-action').forEach((el) => {
           try {
             const title = (el as HTMLElement).getAttribute('title') || '';
-            if (title.toLowerCase().includes('поворот')) (el as HTMLElement).remove();
+            const t = title.toLowerCase();
+            if (
+              t.includes('поворот') ||
+              t.includes('удал') ||
+              t.includes('delete') ||
+              t.includes('remove') ||
+              t.includes('trash')
+            )
+              (el as HTMLElement).remove();
           } catch {}
         });
       };
@@ -1102,7 +1360,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
         typeof getLatLngs === 'function' ? getLatLngs.call(layer) : undefined,
       );
     }
-    const dl = layer as DrawnLayer & PMAttachable & { options?: Record<string, unknown> };
+    const dl = layer as DrawnPmLayer;
     dl.drawnId = dl.drawnId ?? generateDrawnId();
     dl.options = dl.options || {};
     (dl.options as Record<string, unknown>).pmIgnore = false;
@@ -1115,6 +1373,8 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     }
     // attach right-click-to-delete handler
     attachContextDelete(layer);
+    // attach hover listeners to show measurements
+    attachHoverListeners(layer);
     persistAllDrawnLayers(leafletMap);
   });
 
@@ -1193,6 +1453,45 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     stopDrawMode();
     try {
       const layer = e.layer as unknown as PmLayer & DrawnLayer;
+
+      // Circles don't expose getLatLngs; handle them explicitly
+      if (layer && layer instanceof L.Circle) {
+        measurementMode.value = 'area';
+        try {
+          const r = (layer as L.Circle).getRadius();
+          const area = Math.PI * r * r;
+          measurementText.value = `${formatDistance(r)} • ${formatArea(area)}`;
+        } catch {
+          /* ignore */
+        }
+
+        const dl2 = layer as L.Circle & DrawnPmLayer;
+        dl2.drawnId = dl2.drawnId ?? generateDrawnId();
+        dl2.options = dl2.options || {};
+        (dl2.options as Record<string, unknown>).pmIgnore = false;
+        if (dl2.pm && typeof dl2.pm.enable === 'function') {
+          try {
+            dl2.pm.enable();
+          } catch {
+            /* ignore */
+          }
+        }
+        // attach right-click delete and hover measurement handlers for newly created circles
+        try {
+          attachContextDelete(layer);
+        } catch {}
+        try {
+          attachHoverListeners(layer);
+        } catch {}
+
+        setTimeout(() => (measurementText.value = ''), 3000);
+        persistAllDrawnLayers(leafletMap);
+
+        // done
+        setMapInteractivity(true);
+        return;
+      }
+
       if (layer && typeof layer.getLatLngs === 'function') {
         const ll = layer.getLatLngs() as unknown;
         const pts: L.LatLng[] = ([] as L.LatLng[]).concat(...(ll as unknown as L.LatLng[][]));
@@ -1204,7 +1503,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
           measurementText.value = formatDistance(computeLengthLatLngs(pts));
         }
         setTimeout(() => (measurementText.value = ''), 3000);
-        const dl2 = layer as DrawnLayer & PMAttachable & { options?: Record<string, unknown> };
+        const dl2 = layer as DrawnPmLayer;
         dl2.drawnId = dl2.drawnId ?? generateDrawnId();
         dl2.options = dl2.options || {};
         (dl2.options as Record<string, unknown>).pmIgnore = false;
@@ -1215,6 +1514,13 @@ const initMap = useDebounceFn(async (): Promise<void> => {
             /* ignore */
           }
         }
+        // attach right-click delete and hover measurement handlers for newly created layer
+        try {
+          attachContextDelete(layer);
+        } catch {}
+        try {
+          attachHoverListeners(layer);
+        } catch {}
         persistAllDrawnLayers(leafletMap);
       }
     } catch {
@@ -1223,6 +1529,64 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     setMapInteractivity(true);
   });
   // persist after edits/removals are already wired later
+
+  // When a layer is cut (scissors), Geoman may produce new layers or sublayers.
+  // Ensure newly created pieces are user-managed: assign stable ids, re-enable PM,
+  // attach contextmenu delete and hover measurement handlers, and persist state.
+  mapEvents.on('pm:cut', (e: GeomanEvent) => {
+    try {
+      const maybe = e as unknown as { layer?: L.Layer; layers?: L.Layer[] };
+      function processLayer(l: L.Layer | null | undefined) {
+        if (!l) return;
+        try {
+          // mark as user-drawn, enable PM where available
+          const dp = l as DrawnPmLayer;
+          dp.drawnId = dp.drawnId ?? generateDrawnId();
+          dp.options = dp.options || {};
+          (dp.options as Record<string, unknown>).pmIgnore = false;
+          if (dp.pm && typeof dp.pm.enable === 'function') {
+            try {
+              dp.pm.enable();
+            } catch {
+              /* ignore */
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+        try {
+          attachContextDelete(l);
+        } catch {}
+        try {
+          attachHoverListeners(l);
+        } catch {}
+      }
+
+      if (maybe.layer) {
+        const l = maybe.layer;
+        if (
+          (l as LayerWithEach).eachLayer &&
+          typeof (l as LayerWithEach).eachLayer === 'function'
+        ) {
+          try {
+            (l as LayerWithEach).eachLayer!((sub: L.Layer) => processLayer(sub));
+          } catch {}
+        } else {
+          processLayer(l);
+        }
+      }
+
+      if (maybe.layers && Array.isArray(maybe.layers)) {
+        try {
+          (maybe.layers as L.Layer[]).forEach((ll) => processLayer(ll));
+        } catch {}
+      }
+
+      persistAllDrawnLayers(leafletMap);
+    } catch {
+      /* ignore */
+    }
+  });
   mapEvents.on('pm:editend', (e: GeomanEvent) => {
     const layer = e?.layer as unknown as PmLayer | undefined;
     if (layer) detachEditListeners(layer);
@@ -1231,7 +1595,23 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     persistAllDrawnLayers(leafletMap);
     setMapInteractivity(true);
   });
-  leafletMap.on('pm:remove', () => persistAllDrawnLayers(leafletMap));
+  leafletMap.on('pm:remove', (e: { layer?: L.Layer }) => {
+    try {
+      if (e?.layer) {
+        try {
+          detachHoverListeners(e.layer);
+        } catch {}
+        try {
+          if (hoverActiveLayer === e.layer) {
+            hoverActiveLayer = null;
+            measurementText.value = '';
+            measurementMode.value = null;
+          }
+        } catch {}
+      }
+    } catch {}
+    persistAllDrawnLayers(leafletMap);
+  });
 
   // Marker clustering
   if (citiesWithCoords.value.length) {
@@ -1382,6 +1762,40 @@ watch([citiesWithCoords, countriesWithCoords, regionsWithCoords], () => initMap(
 }
 .leaflet-pm-action[title*='Поворот'],
 .leaflet-pm-action[title*='поворот'] {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* Also hide removal/eraser controls (Russian + English) as a best-effort fallback */
+.control-icon.leaflet-pm-icon-remove,
+.leaflet-pm-icon-remove,
+.leaflet-pm-icon-delete,
+.leaflet-pm-icon-trash {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+.button-container[title*='Удал'],
+.button-container[title*='удал'],
+.button-container[title*='удалить'],
+.button-container[title*='Remove'],
+.button-container[title*='remove'],
+.button-container[title*='Delete'],
+.button-container[title*='delete'],
+.button-container[title*='Trash'],
+.button-container[title*='trash'] {
+  display: none !important;
+  visibility: hidden !important;
+}
+.leaflet-pm-action[title*='Удал'],
+.leaflet-pm-action[title*='удал'],
+.leaflet-pm-action[title*='удалить'],
+.leaflet-pm-action[title*='Remove'],
+.leaflet-pm-action[title*='remove'],
+.leaflet-pm-action[title*='Delete'],
+.leaflet-pm-action[title*='delete'],
+.leaflet-pm-action[title*='Trash'],
+.leaflet-pm-action[title*='trash'] {
   display: none !important;
   visibility: hidden !important;
 }
