@@ -31,7 +31,13 @@
       color="blue"
       :fill-opacity="0.25"
     />
-    <div v-if="measurementText" class="measurement-badge">{{ measurementText }}</div>
+    <Transition name="measurement-fade">
+      <div v-if="measurementText" class="measurement-badge" role="status" aria-live="polite">
+        <Transition name="measurement-text" mode="out-in">
+          <span :key="measurementText">{{ measurementText }}</span>
+        </Transition>
+      </div>
+    </Transition>
 
     <!-- Small inline delete bubble (appears over a drawn element) -->
     <div
@@ -1312,12 +1318,50 @@ watch([citiesWithCoords, countriesWithCoords, regionsWithCoords], () => initMap(
   position: fixed;
   right: 12px;
   top: 12px;
-  background: rgba(0, 0, 0, 0.72);
+  background: rgba(0, 0, 0, 0.7);
   color: white;
-  padding: 8px 12px;
-  border-radius: 6px;
+  padding: 10px 14px;
+  border-radius: 8px;
   font-weight: 600;
   z-index: 2000;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  transform-origin: center top;
+}
+
+/* Transition: fade + subtle slide */
+.measurement-fade-enter-from,
+.measurement-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+}
+.measurement-fade-enter-active,
+.measurement-fade-leave-active {
+  transition:
+    opacity 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
+    transform 180ms cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+.measurement-fade-enter-to,
+.measurement-fade-leave-from {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+/* Content cross-fade / subtle scale on updates */
+.measurement-text-enter-from {
+  opacity: 0;
+  transform: scale(0.98) translateY(-2px);
+}
+.measurement-text-enter-active,
+.measurement-text-leave-active {
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+.measurement-text-leave-to {
+  opacity: 0;
+  transform: scale(0.98) translateY(-2px);
 }
 
 .leaflet-pm-toolbar {
