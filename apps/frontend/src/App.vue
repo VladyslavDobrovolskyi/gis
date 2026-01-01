@@ -32,6 +32,21 @@
       :fill-opacity="0.25"
     />
     <div v-if="measurementText" class="measurement-badge">{{ measurementText }}</div>
+
+    <!-- In-app confirmation modal for deletions -->
+    <div v-if="confirmDeleteVisible" class="confirm-overlay" role="dialog" aria-modal="true">
+      <div class="confirm-dialog" @click.stop>
+        <div class="confirm-icon">🗑️</div>
+        <h3 class="confirm-title">Удалить объект?</h3>
+        <p class="confirm-body">
+          Вы уверены, что хотите удалить выбранный объект? Это действие нельзя отменить.
+        </p>
+        <div class="confirm-actions">
+          <button class="btn btn-delete" @click="confirmDeletion">Удалить</button>
+          <button class="btn btn-cancel" @click="cancelDeletion">Отмена</button>
+        </div>
+      </div>
+    </div>
   </l-map>
 </template>
 
@@ -399,7 +414,134 @@ function detachEditListeners(layer: PmLayer) {
   measurementText.value = '';
 }
 
+// typed helper for layers that expose `eachLayer`
+interface LayerWithEach {
+  eachLayer?: (fn: (l: L.Layer) => void) => void;
+}
+
+// Confirmation modal state for deletion (replaces window.confirm)
+const confirmDeleteVisible = ref(false);
+const confirmDeleteTarget = ref<{ layer: L.Layer; isGroup: boolean } | null>(null);
+let modalEscHandler: ((e: KeyboardEvent) => void) | null = null;
+
+function showDeleteConfirm(target: L.Layer, isGroup = false) {
+  confirmDeleteTarget.value = { layer: target, isGroup };
+  confirmDeleteVisible.value = true;
+  try {
+    modalEscHandler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') cancelDeletion();
+    };
+    document.addEventListener('keydown', modalEscHandler);
+  } catch {
+    // ignore
+  }
+}
+
+function cancelDeletion(): void {
+  confirmDeleteVisible.value = false;
+  confirmDeleteTarget.value = null;
+  try {
+    if (modalEscHandler) document.removeEventListener('keydown', modalEscHandler);
+  } catch {
+    /* ignore */
+  }
+  modalEscHandler = null;
+}
+
+function confirmDeletion(): void {
+  const map = mapRef.value?.leafletObject as L.Map | undefined;
+  if (!map || !confirmDeleteTarget.value) {
+    cancelDeletion();
+    return;
+  }
+  try {
+    const { layer, isGroup } = confirmDeleteTarget.value;
+    const lw = layer as LayerWithEach;
+    if (isGroup && typeof lw.eachLayer === 'function') {
+      try {
+        lw.eachLayer!((sub: L.Layer) => {
+          try {
+            if (map.hasLayer(sub)) map.removeLayer(sub as L.Layer);
+          } catch {
+            /* ignore */
+          }
+        });
+      } catch {
+        /* ignore */
+      }
+    } else {
+      try {
+        if (map.hasLayer(layer as L.Layer)) map.removeLayer(layer as L.Layer);
+      } catch {
+        /* ignore */
+      }
+    }
+    persistAllDrawnLayers(map);
+  } catch {
+    // ignore
+  }
+  cancelDeletion();
+}
+
 /* -------------------- Map init -------------------- */
+
+// small helper to generate stable unique ids for drawn features
+function generateDrawnId(): string {
+  const g = globalThis as unknown as { crypto?: { randomUUID?: () => string } };
+  if (g && g.crypto && typeof g.crypto.randomUUID === 'function') {
+    try {
+      return g.crypto.randomUUID!();
+    } catch {
+      // fallback
+    }
+  }
+  return `${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffff).toString(36)}`;
+}
+
+// collect and persist GeoJSON features currently on the map
+function persistAllDrawnLayers(map: L.Map): void {
+  const features: GeoJSON.Feature[] = [];
+  map.eachLayer((layer: L.Layer) => {
+    try {
+      // Persist layers that are not explicitly ignored by Geoman (pmIgnore)
+      const maybeDrawn = layer as DrawnLayer;
+      const opts = (layer as unknown as { options?: Record<string, unknown> }).options || {};
+      const pmIgnored = Boolean(opts.pmIgnore);
+      if (
+        !pmIgnored &&
+        typeof (layer as L.Layer & { toGeoJSON?: unknown }).toGeoJSON === 'function'
+      ) {
+        const geo = (layer as L.Layer & { toGeoJSON: () => GeoJSON.Feature }).toGeoJSON();
+        if (
+          geo &&
+          (geo.geometry?.type === 'Polygon' ||
+            geo.geometry?.type === 'MultiPolygon' ||
+            geo.geometry?.type === 'LineString' ||
+            geo.geometry?.type === 'MultiLineString')
+        ) {
+          // ensure feature id and a stable property
+          const id = (maybeDrawn.drawnId ||= generateDrawnId());
+          if (!geo.id) geo.id = id;
+          if (!geo.properties) geo.properties = {} as Record<string, unknown>;
+          (geo.properties as Record<string, unknown>).__id = id;
+          features.push(geo);
+        }
+      }
+    } catch {
+      // ignore layers that fail conversion
+    }
+  });
+  // ensure plain-serializable object and write directly to localStorage
+  const fc = JSON.parse(
+    JSON.stringify({ type: 'FeatureCollection', features }),
+  ) as GeoJSON.FeatureCollection;
+  try {
+    localStorage.setItem('map:drawn', JSON.stringify(fc));
+  } catch {
+    // ignore localStorage errors (e.g., quota)
+  }
+  mapStore.drawn = fc;
+}
 
 const initMap = useDebounceFn(async (): Promise<void> => {
   await nextTick();
@@ -417,7 +559,6 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     }
   }
 
-  // collect and persist GeoJSON features currently on the map
   // small helper to generate stable unique ids for drawn features
   function generateDrawnId(): string {
     const g = globalThis as unknown as { crypto?: { randomUUID?: () => string } };
@@ -477,6 +618,8 @@ const initMap = useDebounceFn(async (): Promise<void> => {
   }
 
   // Attach right-click-to-delete handler to a layer or its sublayers
+
+  // Attach right-click-to-delete handler to a layer or its sublayers
   function attachContextDelete(layer: L.Layer | null | undefined): void {
     if (!layer) return;
     const maybe = layer as L.Layer & {
@@ -493,47 +636,35 @@ const initMap = useDebounceFn(async (): Promise<void> => {
 
     const handler = (ev?: L.LeafletMouseEvent) => {
       try {
+        // determine clicked layer (ev.target if available), otherwise fallback to maybe
+        const clickedLayer = ev?.target as L.Layer | undefined;
+        const targetLayer = clickedLayer ?? maybe;
+
         // ensure we only delete user-created layers (they have drawnId)
+        const tl = targetLayer as LayerWithEach & DrawnLayer;
+        const isGroupLocal = typeof (tl as LayerWithEach).eachLayer === 'function';
         const isUserLayer =
-          Boolean((maybe as DrawnLayer).drawnId) ||
-          (typeof maybe.eachLayer === 'function' &&
+          Boolean((tl as DrawnLayer).drawnId) ||
+          (isGroupLocal &&
             (() => {
               let found = false;
-              maybe.eachLayer!((sub) => {
-                if ((sub as DrawnLayer).drawnId) found = true;
-              });
+              try {
+                (tl as LayerWithEach).eachLayer!((sub: L.Layer) => {
+                  if ((sub as DrawnLayer).drawnId) found = true;
+                });
+              } catch {
+                /* ignore */
+              }
               return found;
             })());
         if (!isUserLayer) return;
-
-        // confirm with the user
-        const ok = typeof window !== 'undefined' ? window.confirm('Удалить объект?') : true;
-        if (!ok) return;
 
         // prevent default browser menu
         ev?.originalEvent?.preventDefault?.();
         ev?.originalEvent?.stopPropagation?.();
 
-        // remove layer(s) from the map
-        try {
-          const map = mapRef.value?.leafletObject as L.Map | undefined;
-          if (!map) return;
-          if (typeof maybe.eachLayer === 'function') {
-            maybe.eachLayer!((sub) => {
-              try {
-                if (map.hasLayer(sub)) map.removeLayer(sub);
-              } catch {
-                /* ignore */
-              }
-            });
-          } else {
-            if (map.hasLayer(maybe)) map.removeLayer(maybe);
-          }
-          // persist new state
-          persistAllDrawnLayers(map);
-        } catch {
-          /* ignore */
-        }
+        // show in-app confirmation modal
+        showDeleteConfirm(tl as L.Layer, isGroupLocal);
       } catch {
         /* ignore */
       }
@@ -550,7 +681,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     // also attach to sublayers for groups
     if (typeof maybe.eachLayer === 'function') {
       try {
-        maybe.eachLayer!((sub) => {
+        maybe.eachLayer!((sub: L.Layer) => {
           const s = sub as L.Layer & {
             __contextDeleteAttached?: boolean;
             on?: (ev: string, handler: (ev?: L.LeafletEvent) => void) => void;
@@ -1027,5 +1158,58 @@ watch([citiesWithCoords, countriesWithCoords, regionsWithCoords], () => initMap(
 .leaflet-pm-action[title*='поворот'] {
   display: none !important;
   visibility: hidden !important;
+}
+
+/* Delete confirmation modal styles */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 3000;
+}
+.confirm-dialog {
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 20px 28px;
+  max-width: 420px;
+  width: 90%;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  text-align: center;
+}
+.confirm-icon {
+  font-size: 42px;
+  margin-bottom: 8px;
+}
+.confirm-title {
+  margin: 0 0 6px 0;
+  font-size: 18px;
+}
+.confirm-body {
+  margin: 0 0 18px 0;
+  color: #333;
+  opacity: 0.9;
+}
+.confirm-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+.btn {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+}
+.btn-delete {
+  background: #d93f3f;
+  color: white;
+}
+.btn-cancel {
+  background: #f0f0f0;
+  color: #222;
 }
 </style>
