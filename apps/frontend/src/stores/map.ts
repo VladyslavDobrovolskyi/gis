@@ -13,5 +13,9 @@ export const useMapStore = defineStore('map', () => {
   // persisted drawn GeoJSON features (FeatureCollection)
   const drawn = useStorage<GeoJSON.FeatureCollection | null>('map:drawn', null);
 
-  return { center, zoom, measurementMode, measurementText, drawn };
+  // persist active Geoman tool (e.g., 'Rectangle', 'Polygon') and global edit toggle
+  const activeTool = useStorage<string | null>('map:activeTool', null);
+  const globalEdit = useStorage<boolean>('map:globalEdit', false);
+
+  return { center, zoom, measurementMode, measurementText, drawn, activeTool, globalEdit };
 });

@@ -36,7 +36,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from 'vue';
+import { ref, computed, nextTick, watch, onBeforeUnmount } from 'vue';
 import { LMap, LTileLayer, LPolygon } from '@vue-leaflet/vue-leaflet';
 import { trpc } from './trpc';
 import type { City } from '@gis/shared/schemas';
@@ -714,15 +714,44 @@ const initMap = useDebounceFn(async (): Promise<void> => {
   // Right-click cancels active Geoman tool (draw/edit) and re-enables map interactivity
   leafletMap.on('contextmenu', () => {
     try {
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      if (isGeoman(pm)) {
+        if (typeof pm.disableDraw === 'function') pm.disableDraw();
+        if (typeof pm.disableGlobalEditMode === 'function') pm.disableGlobalEditMode();
+      }
     } catch {
       // ignore
     }
-    if (isGeoman(pm)) {
-      if (typeof pm.disableDraw === 'function') pm.disableDraw();
-      if (typeof pm.disableGlobalEditMode === 'function') pm.disableGlobalEditMode();
-    }
+    mapStore.activeTool = null;
+    mapStore.globalEdit = false;
     setMapInteractivity(true);
+  });
+
+  // Pressing Escape should cancel active Geoman tools (same as right-click)
+  const onEscapeKey = (e: KeyboardEvent) => {
+    if (e.key !== 'Escape') return;
+    try {
+      if (isGeoman(pm)) {
+        if (typeof pm.disableDraw === 'function') pm.disableDraw();
+        if (typeof pm.disableGlobalEditMode === 'function') pm.disableGlobalEditMode();
+      }
+    } catch {
+      // ignore
+    }
+    mapStore.activeTool = null;
+    mapStore.globalEdit = false;
+    setMapInteractivity(true);
+  };
+  try {
+    document.addEventListener('keydown', onEscapeKey);
+  } catch {
+    // ignore
+  }
+  onBeforeUnmount(() => {
+    try {
+      document.removeEventListener('keydown', onEscapeKey);
+    } catch {
+      // ignore
+    }
   });
 
   // Measurement wiring: call top-level helper functions that manage measurements
