@@ -295,7 +295,11 @@ const mapStore = useMapStore();
 
 // initialize local measurement refs from store (if present)
 if (mapStore.measurementMode) measurementMode.value = mapStore.measurementMode;
-if (mapStore.measurementText) measurementText.value = mapStore.measurementText;
+// Do NOT restore a previous measurement text on startup — avoid showing stale measurements.
+// We'll clear it explicitly after the map initializes so measurements appear only during
+// active drawing or hover interactions.
+measurementText.value = '';
+mapStore.measurementText = '';
 
 // keep store in sync with reactive refs
 watch(measurementMode, (v) => (mapStore.measurementMode = v));
