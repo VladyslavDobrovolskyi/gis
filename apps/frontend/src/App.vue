@@ -43,6 +43,8 @@ import type { City } from '@gis/shared/schemas';
 import L, { Polyline, Polygon, LeafletEvent } from 'leaflet';
 import { useQuery } from '@tanstack/vue-query';
 import { useDebounceFn } from '@vueuse/core';
+import { length as turfLength, area as turfArea, lineString, polygon } from '@turf/turf';
+import { useMapStore } from './stores/map';
 
 /* -------------------- Leaflet плагины -------------------- */
 
@@ -84,6 +86,54 @@ interface Region {
   geom: string | null;
 }
 
+// minimal typing to avoid `any`
+interface MarkerClusterGroupLike extends L.Layer {
+  addLayer(layer: L.Layer): void;
+  removeLayer(layer: L.Layer): void;
+}
+interface DrawnLayer extends L.Layer {
+  __drawn?: boolean;
+  getLatLngs?: () => unknown;
+}
+interface GeomanPM {
+  setLang?(lang: string): void;
+  addControls?(opts: {
+    position?: string;
+    drawMarker?: boolean;
+    drawCircleMarker?: boolean;
+    drawPolyline?: boolean;
+    drawPolygon?: boolean;
+    drawRectangle?: boolean;
+    editMode?: boolean;
+    dragMode?: boolean;
+    removalMode?: boolean;
+  }): void;
+  disableDraw?(): void;
+  disableGlobalEditMode?(): void;
+}
+
+// Type guard for Geoman
+function isGeoman(pm: unknown): pm is GeomanPM {
+  return (
+    !!pm &&
+    typeof pm === 'object' &&
+    ('setLang' in pm || 'addControls' in pm || 'disableDraw' in pm)
+  );
+}
+
+// Factory for markerClusterGroup
+function createMarkerClusterGroup(): MarkerClusterGroupLike | null {
+  const maybeFactory = (L as unknown as Record<string, unknown>)['markerClusterGroup'];
+  if (typeof maybeFactory === 'function') {
+    return (maybeFactory as () => MarkerClusterGroupLike)();
+  }
+  const maybeCtor = (L as unknown as Record<string, unknown>)['MarkerClusterGroup'];
+  if (typeof maybeCtor === 'function') {
+    return new (maybeCtor as new () => MarkerClusterGroupLike)();
+  }
+  return null;
+}
+
 /* -------------------- Constants -------------------- */
 
 const greenIcon = new L.Icon({
@@ -97,7 +147,7 @@ const greenIcon = new L.Icon({
 });
 
 const mapRef = ref<InstanceType<typeof LMap> | null>(null);
-let markerClusterGroup: L.MarkerClusterGroup | null = null;
+let markerClusterGroup: MarkerClusterGroupLike | null = null;
 
 /* -------------------- Queries -------------------- */
 
@@ -208,6 +258,16 @@ const citiesWithPolygonCoords = computed(() =>
 let currentDrawPoints: L.LatLng[] = [];
 const measurementMode = ref<'distance' | 'area' | null>(null);
 const measurementText = ref<string>('');
+// Pinia store persisted in localStorage via VueUse
+const mapStore = useMapStore();
+
+// initialize local measurement refs from store (if present)
+if (mapStore.measurementMode) measurementMode.value = mapStore.measurementMode;
+if (mapStore.measurementText) measurementText.value = mapStore.measurementText;
+
+// keep store in sync with reactive refs
+watch(measurementMode, (v) => (mapStore.measurementMode = v));
+watch(measurementText, (v) => (mapStore.measurementText = v));
 
 type PmLayer = L.Layer & {
   getLatLngs?: () => unknown;
@@ -215,52 +275,37 @@ type PmLayer = L.Layer & {
   off?: (evt: string, fn?: (...args: unknown[]) => void) => void;
 };
 
-function formatDistance(m: number) {
+function formatDistance(m: number): string {
   if (m >= 1000) return `${(m / 1000).toFixed(2)} km`;
   return `${Math.round(m)} m`;
 }
-function formatArea(m2: number) {
+function formatArea(m2: number): string {
   if (m2 >= 1_000_000) return `${(m2 / 1_000_000).toFixed(2)} km²`;
   return `${Math.round(m2)} m²`;
 }
 
-function haversine(a: [number, number], b: [number, number]) {
-  const toRad = (deg: number) => (deg * Math.PI) / 180;
-  const [lat1, lon1] = a;
-  const [lat2, lon2] = b;
-  const R = 6371000; // meters
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const s1 =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(s1));
+function computeLengthLatLngs(points: L.LatLng[]): number {
+  if (points.length < 2) return 0;
+  // turf expects [lng, lat]
+  const coords = points.map((p) => [p.lng, p.lat] as [number, number]);
+  const line = lineString(coords);
+  // ask turf for meters directly
+  return turfLength(line, { units: 'meters' }) as number;
 }
 
-function computeLengthLatLngs(points: L.LatLng[]) {
-  let sum = 0;
-  for (let i = 1; i < points.length; i++) {
-    sum += haversine([points[i - 1].lat, points[i - 1].lng], [points[i].lat, points[i].lng]);
-  }
-  return sum;
-}
-
-function projectToMeters(lat: number, lon: number) {
-  const R = 6378137;
-  const x = (R * (lon * Math.PI)) / 180;
-  const y = R * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
-  return [x, y];
-}
-
-function computeAreaLatLngs(points: L.LatLng[]) {
+function computeAreaLatLngs(points: L.LatLng[]): number {
   if (points.length < 3) return 0;
-  const pts = points.map((p) => projectToMeters(p.lat, p.lng));
-  let sum = 0;
-  for (let i = 0; i < pts.length; i++) {
-    const j = (i + 1) % pts.length;
-    sum += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
+  // turf expects [lng, lat] and a closed linear ring
+  const coords = points.map((p) => [p.lng, p.lat] as [number, number]);
+  if (
+    coords.length &&
+    (coords[0][0] !== coords[coords.length - 1][0] || coords[0][1] !== coords[coords.length - 1][1])
+  ) {
+    coords.push(coords[0]);
   }
-  return Math.abs(sum / 2);
+  const poly = polygon([coords]);
+  // turf.area returns square meters
+  return turfArea(poly) as number;
 }
 
 function updateMeasurementFromPoints(points: L.LatLng[]) {
@@ -274,19 +319,19 @@ function updateMeasurementFromPoints(points: L.LatLng[]) {
   }
 }
 
-function onDrawVertex(e: { latlng?: L.LatLng }) {
+function onDrawVertex(e: { latlng?: L.LatLng }): void {
   if (!e || !e.latlng) return;
   currentDrawPoints.push(e.latlng);
   updateMeasurementFromPoints(currentDrawPoints);
 }
 
-function onMouseMoveDuringDraw(e: L.LeafletMouseEvent) {
+function onMouseMoveDuringDraw(e: L.LeafletMouseEvent): void {
   if (!currentDrawPoints.length) return;
   const preview = [...currentDrawPoints, e.latlng];
   updateMeasurementFromPoints(preview);
 }
 
-function startDrawMode(shape: string) {
+function startDrawMode(shape: string): void {
   currentDrawPoints = [];
   const s = (shape || '').toLowerCase();
   if (s.includes('line') || s.includes('polyline')) {
@@ -309,7 +354,7 @@ function startDrawMode(shape: string) {
   map.on('mousemove', onMouseMoveDuringDraw as (ev: L.LeafletMouseEvent) => void);
 }
 
-function stopDrawMode() {
+function stopDrawMode(): void {
   const map = mapRef.value?.leafletObject as L.Map | undefined;
   if (map) {
     map.off('pm:drawvertex', onDrawVertex as (ev: unknown) => void);
@@ -320,14 +365,16 @@ function stopDrawMode() {
   setTimeout(() => (measurementText.value = ''), 3000);
 }
 
-function attachEditListeners(layer: PmLayer) {
+function attachEditListeners(layer: PmLayer): void {
   measurementMode.value =
     layer instanceof L.Polygon ? 'area' : layer instanceof L.Polyline ? 'distance' : null;
   if (!measurementMode.value) return;
-  const update = () => {
-    const ll = typeof layer.getLatLngs === 'function' ? (layer.getLatLngs!() as unknown) : [];
-    const pts: L.LatLng[] = ([] as L.LatLng[]).concat(...(ll as unknown as L.LatLng[][]));
-    updateMeasurementFromPoints(pts);
+  const update = (): void => {
+    if (typeof layer.getLatLngs === 'function') {
+      const ll = layer.getLatLngs() as unknown;
+      const pts: L.LatLng[] = ([] as L.LatLng[]).concat(...(ll as unknown as L.LatLng[][]));
+      updateMeasurementFromPoints(pts);
+    }
   };
   if (layer.on) layer.on('pm:edit', update);
   if (layer.on) layer.on('pm:dragend', update);
@@ -345,23 +392,100 @@ function detachEditListeners(layer: PmLayer) {
 
 /* -------------------- Map init -------------------- */
 
-const initMap = useDebounceFn(async () => {
+const initMap = useDebounceFn(async (): Promise<void> => {
   await nextTick();
   const leafletMap = mapRef.value?.leafletObject as L.Map | undefined;
   if (!leafletMap) return;
 
-  leafletMap.pm.setLang('ru');
-  leafletMap.pm.addControls({
-    position: 'topleft',
-    drawMarker: false,
-    drawCircleMarker: false,
-    drawPolyline: true,
-    drawPolygon: true,
-    drawRectangle: true,
-    editMode: true,
-    dragMode: true,
-    removalMode: true,
+  const pm = (leafletMap as unknown as { pm?: unknown }).pm;
+
+  // restore saved view if present
+  if (mapStore.center && mapStore.zoom) {
+    try {
+      leafletMap.setView(mapStore.center as [number, number], mapStore.zoom);
+    } catch {
+      /* ignore invalid stored view */
+    }
+  }
+
+  // collect and persist GeoJSON features currently on the map
+  function persistAllDrawnLayers(map: L.Map): void {
+    const features: GeoJSON.Feature[] = [];
+    map.eachLayer((layer: L.Layer) => {
+      try {
+        // only persist layers that are marked as created/restored by Geoman
+        const maybeDrawn = layer as DrawnLayer;
+        if (
+          maybeDrawn.__drawn &&
+          typeof (layer as L.Layer & { toGeoJSON?: unknown }).toGeoJSON === 'function'
+        ) {
+          const geo = (layer as L.Layer & { toGeoJSON: () => GeoJSON.Feature }).toGeoJSON();
+          if (
+            geo &&
+            (geo.geometry?.type === 'Polygon' ||
+              geo.geometry?.type === 'MultiPolygon' ||
+              geo.geometry?.type === 'LineString' ||
+              geo.geometry?.type === 'MultiLineString')
+          ) {
+            features.push(geo);
+          }
+        }
+      } catch {
+        // ignore layers that fail conversion
+      }
+    });
+    mapStore.drawn = { type: 'FeatureCollection', features } as GeoJSON.FeatureCollection;
+  }
+
+  // restore drawn features from store
+  if (mapStore.drawn?.features?.length) {
+    L.geoJSON(mapStore.drawn, {
+      onEachFeature(_feature, layer: L.Layer) {
+        try {
+          layer.addTo(leafletMap);
+          if (
+            'eachLayer' in layer &&
+            typeof (layer as L.Layer & { eachLayer?: (fn: (l: L.Layer) => void) => void })
+              .eachLayer === 'function'
+          ) {
+            (layer as L.Layer & { eachLayer?: (fn: (l: L.Layer) => void) => void }).eachLayer!(
+              (sub: L.Layer) => {
+                (sub as DrawnLayer).__drawn = true;
+              },
+            );
+          } else {
+            (layer as DrawnLayer).__drawn = true;
+          }
+        } catch {
+          // ignore
+        }
+      },
+    }).addTo(leafletMap);
+  }
+
+  // persist view on move end
+  leafletMap.on('moveend', () => {
+    const c = leafletMap.getCenter();
+    mapStore.center = [c.lat, c.lng];
+    mapStore.zoom = leafletMap.getZoom();
   });
+
+  // Geoman initialization
+  if (isGeoman(pm)) {
+    if (typeof pm.setLang === 'function') pm.setLang('ru');
+    if (typeof pm.addControls === 'function')
+      pm.addControls({
+        position: 'topleft',
+        drawMarker: false,
+        drawCircleMarker: false,
+        drawPolyline: true,
+        drawPolygon: true,
+        drawRectangle: true,
+        editMode: true,
+        dragMode: true,
+        removalMode: true,
+      });
+  }
 
   // Toggle map interactions to avoid input conflicts when Geoman tools are active
   function setMapInteractivity(enabled: boolean) {
@@ -398,44 +522,44 @@ const initMap = useDebounceFn(async () => {
   leafletMap.on('pm:dragstart', () => setMapInteractivity(false));
   leafletMap.on('pm:dragend', () => setMapInteractivity(true));
 
-  leafletMap.on('pm:create', (e) => {
-    const layer = e.layer as Polyline | Polygon;
-    console.log('Создано:', e.shape, layer.getLatLngs());
+  leafletMap.on('pm:create', (e: { layer: L.Layer; shape?: string }) => {
+    const layer = e.layer as DrawnLayer | Polyline | Polygon;
+    const getLatLngs = (layer as DrawnLayer).getLatLngs;
+    if (import.meta.env.DEV) {
+      console.debug(
+        'Создано:',
+        e.shape,
+        typeof getLatLngs === 'function' ? getLatLngs.call(layer) : undefined,
+      );
+    }
+    (layer as DrawnLayer).__drawn = true;
+    persistAllDrawnLayers(leafletMap);
   });
 
   // Right-click cancels active Geoman tool (draw/edit) and re-enables map interactivity
   leafletMap.on('contextmenu', () => {
-    // Dispatch Escape keyboard event which Geoman listens to for cancel
     try {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     } catch {
       // ignore
     }
-
-    // Also try safe direct disabling of Geoman if available
-    const pm = (leafletMap as unknown as { pm?: unknown }).pm;
-    if (
-      pm &&
-      'disableDraw' in (pm as Record<string, unknown>) &&
-      typeof (pm as Record<string, unknown>).disableDraw === 'function'
-    ) {
-      (pm as Record<string, (...args: unknown[]) => unknown>).disableDraw();
+    if (isGeoman(pm)) {
+      if (typeof pm.disableDraw === 'function') pm.disableDraw();
+      if (typeof pm.disableGlobalEditMode === 'function') pm.disableGlobalEditMode();
     }
-    if (
-      pm &&
-      'disableGlobalEditMode' in (pm as Record<string, unknown>) &&
-      typeof (pm as Record<string, unknown>).disableGlobalEditMode === 'function'
-    ) {
-      (pm as Record<string, (...args: unknown[]) => unknown>).disableGlobalEditMode();
-    }
-
-    // Ensure map is interactive after cancel
     setMapInteractivity(true);
   });
 
   // Measurement wiring: call top-level helper functions that manage measurements
   const mapEvents = leafletMap as L.Map;
   type GeomanEvent = LeafletEvent & { shape?: string; layer?: unknown; latlng?: L.LatLng };
+
+  // Attach measurement update listeners when edit starts
+  mapEvents.on('pm:editstart', (e: GeomanEvent) => {
+    const layer = e?.layer as unknown as PmLayer | undefined;
+    if (layer) attachEditListeners(layer);
+    setMapInteractivity(false);
+  });
 
   mapEvents.on('pm:drawstart', (e: GeomanEvent) => {
     const shape = (e?.shape as string) ?? '';
@@ -450,9 +574,9 @@ const initMap = useDebounceFn(async () => {
   mapEvents.on('pm:create', (e: GeomanEvent) => {
     stopDrawMode();
     try {
-      const layer = e.layer as unknown as PmLayer;
+      const layer = e.layer as unknown as PmLayer & DrawnLayer;
       if (layer && typeof layer.getLatLngs === 'function') {
-        const ll = layer.getLatLngs!() as unknown;
+        const ll = layer.getLatLngs() as unknown;
         const pts: L.LatLng[] = ([] as L.LatLng[]).concat(...(ll as unknown as L.LatLng[][]));
         if (layer instanceof L.Polygon) {
           measurementMode.value = 'area';
@@ -462,39 +586,41 @@ const initMap = useDebounceFn(async () => {
           measurementText.value = formatDistance(computeLengthLatLngs(pts));
         }
         setTimeout(() => (measurementText.value = ''), 3000);
+        (layer as DrawnLayer).__drawn = true;
+        persistAllDrawnLayers(leafletMap);
       }
     } catch {
       // ignore
     }
     setMapInteractivity(true);
   });
-  mapEvents.on('pm:editstart', (e: GeomanEvent) => {
-    const layer = e?.layer as unknown as PmLayer | undefined;
-    if (layer) attachEditListeners(layer);
-    setMapInteractivity(false);
-  });
+  // persist after edits/removals are already wired later
   mapEvents.on('pm:editend', (e: GeomanEvent) => {
     const layer = e?.layer as unknown as PmLayer | undefined;
     if (layer) detachEditListeners(layer);
     measurementText.value = '';
+    // persist after edits
+    persistAllDrawnLayers(leafletMap);
     setMapInteractivity(true);
   });
+  leafletMap.on('pm:remove', () => persistAllDrawnLayers(leafletMap));
 
   // Marker clustering
   if (citiesWithCoords.value.length) {
     if (markerClusterGroup) {
       leafletMap.removeLayer(markerClusterGroup);
+      markerClusterGroup = null;
     }
-
-    markerClusterGroup = L.markerClusterGroup();
-
-    citiesWithCoords.value.forEach((city) => {
-      const marker = L.marker(city.coords, { icon: greenIcon });
-      marker.bindPopup(`<strong>${city.city_name}</strong>`);
-      markerClusterGroup!.addLayer(marker);
-    });
-
-    leafletMap.addLayer(markerClusterGroup);
+    const created = createMarkerClusterGroup();
+    if (created) {
+      markerClusterGroup = created;
+      citiesWithCoords.value.forEach((city) => {
+        const marker = L.marker(city.coords, { icon: greenIcon });
+        marker.bindPopup(`<strong>${city.city_name}</strong>`);
+        markerClusterGroup!.addLayer(marker);
+      });
+      leafletMap.addLayer(markerClusterGroup);
+    }
   }
 }, 150);
 watch([citiesWithCoords, countriesWithCoords, regionsWithCoords], () => initMap());
