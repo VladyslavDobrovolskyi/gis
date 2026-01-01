@@ -476,6 +476,95 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     mapStore.drawn = fc;
   }
 
+  // Attach right-click-to-delete handler to a layer or its sublayers
+  function attachContextDelete(layer: L.Layer | null | undefined): void {
+    if (!layer) return;
+    const maybe = layer as L.Layer & {
+      on?: (evName: string, handler: (ev?: L.LeafletEvent) => void) => void;
+      off?: (evName: string, handler?: (ev?: L.LeafletEvent) => void) => void;
+      eachLayer?: (fn: (l: L.Layer) => void) => void;
+      options?: Record<string, unknown>;
+      // marker to avoid double-attaching
+      __contextDeleteAttached?: boolean;
+    };
+
+    if (maybe.__contextDeleteAttached) return;
+    maybe.__contextDeleteAttached = true;
+
+    const handler = (ev?: L.LeafletMouseEvent) => {
+      try {
+        // ensure we only delete user-created layers (they have drawnId)
+        const isUserLayer =
+          Boolean((maybe as DrawnLayer).drawnId) ||
+          (typeof maybe.eachLayer === 'function' &&
+            (() => {
+              let found = false;
+              maybe.eachLayer!((sub) => {
+                if ((sub as DrawnLayer).drawnId) found = true;
+              });
+              return found;
+            })());
+        if (!isUserLayer) return;
+
+        // confirm with the user
+        const ok = typeof window !== 'undefined' ? window.confirm('Удалить объект?') : true;
+        if (!ok) return;
+
+        // prevent default browser menu
+        ev?.originalEvent?.preventDefault?.();
+        ev?.originalEvent?.stopPropagation?.();
+
+        // remove layer(s) from the map
+        try {
+          const map = mapRef.value?.leafletObject as L.Map | undefined;
+          if (!map) return;
+          if (typeof maybe.eachLayer === 'function') {
+            maybe.eachLayer!((sub) => {
+              try {
+                if (map.hasLayer(sub)) map.removeLayer(sub);
+              } catch {
+                /* ignore */
+              }
+            });
+          } else {
+            if (map.hasLayer(maybe)) map.removeLayer(maybe);
+          }
+          // persist new state
+          persistAllDrawnLayers(map);
+        } catch {
+          /* ignore */
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+
+    if (maybe.on) {
+      try {
+        maybe.on('contextmenu', handler);
+      } catch {
+        // ignore
+      }
+    }
+
+    // also attach to sublayers for groups
+    if (typeof maybe.eachLayer === 'function') {
+      try {
+        maybe.eachLayer!((sub) => {
+          const s = sub as L.Layer & {
+            __contextDeleteAttached?: boolean;
+            on?: (ev: string, handler: (ev?: L.LeafletEvent) => void) => void;
+          };
+          if (s.__contextDeleteAttached) return;
+          s.__contextDeleteAttached = true;
+          if (s.on) s.on('contextmenu', handler);
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
   // restore drawn features from store
   if (mapStore.drawn?.features?.length) {
     L.geoJSON(mapStore.drawn, {
@@ -505,6 +594,8 @@ const initMap = useDebounceFn(async (): Promise<void> => {
                     /* ignore */
                   }
                 }
+                // attach right-click-to-delete handler to restored sublayer
+                attachContextDelete(sub);
               },
             );
           } else {
@@ -520,6 +611,8 @@ const initMap = useDebounceFn(async (): Promise<void> => {
                 /* ignore */
               }
             }
+            // attach right-click-to-delete handler to restored layer
+            attachContextDelete(layer);
           }
         } catch {
           // ignore
@@ -708,6 +801,8 @@ const initMap = useDebounceFn(async (): Promise<void> => {
         /* ignore */
       }
     }
+    // attach right-click-to-delete handler
+    attachContextDelete(layer);
     persistAllDrawnLayers(leafletMap);
   });
 
