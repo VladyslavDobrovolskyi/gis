@@ -33,19 +33,16 @@
     />
     <div v-if="measurementText" class="measurement-badge">{{ measurementText }}</div>
 
-    <!-- In-app confirmation modal for deletions -->
-    <div v-if="confirmDeleteVisible" class="confirm-overlay" role="dialog" aria-modal="true">
-      <div class="confirm-dialog" @click.stop>
-        <div class="confirm-icon">🗑️</div>
-        <h3 class="confirm-title">Удалить объект?</h3>
-        <p class="confirm-body">
-          Вы уверены, что хотите удалить выбранный объект? Это действие нельзя отменить.
-        </p>
-        <div class="confirm-actions">
-          <button class="btn btn-delete" @click="confirmDeletion">Удалить</button>
-          <button class="btn btn-cancel" @click="cancelDeletion">Отмена</button>
-        </div>
-      </div>
+    <!-- Small inline delete bubble (appears over a drawn element) -->
+    <div
+      v-if="deleteBubble.visible"
+      class="delete-bubble"
+      :style="{ left: deleteBubble.x + 'px', top: deleteBubble.y + 'px' }"
+      @click.stop
+      role="dialog"
+      aria-label="Удалить объект"
+    >
+      <button class="btn-bubble" @click="confirmDeletion" aria-label="Удалить">✖</button>
     </div>
   </l-map>
 </template>
@@ -419,49 +416,96 @@ interface LayerWithEach {
   eachLayer?: (fn: (l: L.Layer) => void) => void;
 }
 
-// Confirmation modal state for deletion (replaces window.confirm)
-const confirmDeleteVisible = ref(false);
-const confirmDeleteTarget = ref<{ layer: L.Layer; isGroup: boolean } | null>(null);
-let modalEscHandler: ((e: KeyboardEvent) => void) | null = null;
+// Delete bubble state (appears over a drawn element) ✅
+const deleteBubble = ref<{
+  visible: boolean;
+  x: number;
+  y: number;
+  layer: L.Layer | null;
+  isGroup: boolean;
+}>({ visible: false, x: 0, y: 0, layer: null, isGroup: false });
 
-function showDeleteConfirm(target: L.Layer, isGroup = false) {
-  confirmDeleteTarget.value = { layer: target, isGroup };
-  confirmDeleteVisible.value = true;
-  try {
-    modalEscHandler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') cancelDeletion();
-    };
-    document.addEventListener('keydown', modalEscHandler);
-  } catch {
-    // ignore
+let bubbleClickAwayHandler: ((e: MouseEvent) => void) | null = null;
+let bubbleEscHandler: ((e: KeyboardEvent) => void) | null = null;
+
+function showDeleteBubble(target: L.Layer, isGroup = false, ev?: L.LeafletMouseEvent): void {
+  const map = mapRef.value?.leafletObject as L.Map | undefined;
+  let point: L.Point | null = null;
+  if (ev && 'containerPoint' in ev && ev.containerPoint) {
+    point = ev.containerPoint;
+  } else if (ev && ev.latlng && map) {
+    point = map.latLngToContainerPoint(ev.latlng);
+  } else if (
+    map &&
+    (target as LayerWithEach & { getBounds?: () => L.LatLngBounds })?.getBounds &&
+    typeof (target as LayerWithEach & { getBounds?: () => L.LatLngBounds }).getBounds === 'function'
+  ) {
+    try {
+      const lw = target as LayerWithEach & { getBounds?: () => L.LatLngBounds };
+      const center = lw.getBounds!().getCenter();
+      point = map.latLngToContainerPoint(center);
+    } catch {
+      /* ignore */
+    }
   }
-}
 
-function cancelDeletion(): void {
-  confirmDeleteVisible.value = false;
-  confirmDeleteTarget.value = null;
+  deleteBubble.value.layer = target;
+  deleteBubble.value.isGroup = isGroup;
+  deleteBubble.value.x = Math.max(8, Math.round(point ? point.x : 0));
+  deleteBubble.value.y = Math.max(8, Math.round(point ? point.y : 0));
+  deleteBubble.value.visible = true;
   try {
-    if (modalEscHandler) document.removeEventListener('keydown', modalEscHandler);
+    console.debug('showDeleteBubble', {
+      x: deleteBubble.value.x,
+      y: deleteBubble.value.y,
+      isGroup,
+      target,
+    });
+  } catch {}
+  try {
+    bubbleClickAwayHandler = (e: MouseEvent) => {
+      // click outside bubble closes it
+      const el = document.querySelector('.delete-bubble');
+      if (el && e.target && el.contains(e.target as Node)) return;
+      cancelDeleteBubble();
+    };
+    bubbleEscHandler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') cancelDeleteBubble();
+    };
+    document.addEventListener('click', bubbleClickAwayHandler);
+    document.addEventListener('keydown', bubbleEscHandler);
   } catch {
     /* ignore */
   }
-  modalEscHandler = null;
+}
+
+function cancelDeleteBubble(): void {
+  deleteBubble.value.visible = false;
+  deleteBubble.value.layer = null;
+  deleteBubble.value.isGroup = false;
+  try {
+    if (bubbleClickAwayHandler) document.removeEventListener('click', bubbleClickAwayHandler);
+    if (bubbleEscHandler) document.removeEventListener('keydown', bubbleEscHandler);
+  } catch {
+    /* ignore */
+  }
+  bubbleClickAwayHandler = null;
+  bubbleEscHandler = null;
 }
 
 function confirmDeletion(): void {
   const map = mapRef.value?.leafletObject as L.Map | undefined;
-  if (!map || !confirmDeleteTarget.value) {
-    cancelDeletion();
+  const target = deleteBubble.value.layer;
+  if (!map || !target) {
+    cancelDeleteBubble();
     return;
   }
   try {
-    const { layer, isGroup } = confirmDeleteTarget.value;
-    const lw = layer as LayerWithEach;
-    if (isGroup && typeof lw.eachLayer === 'function') {
+    if (deleteBubble.value.isGroup && typeof (target as LayerWithEach).eachLayer === 'function') {
       try {
-        lw.eachLayer!((sub: L.Layer) => {
+        (target as LayerWithEach).eachLayer!((sub: L.Layer) => {
           try {
-            if (map.hasLayer(sub)) map.removeLayer(sub as L.Layer);
+            if (map.hasLayer(sub)) map.removeLayer(sub);
           } catch {
             /* ignore */
           }
@@ -471,16 +515,17 @@ function confirmDeletion(): void {
       }
     } else {
       try {
-        if (map.hasLayer(layer as L.Layer)) map.removeLayer(layer as L.Layer);
+        const t = target as L.Layer;
+        if (map.hasLayer(t)) map.removeLayer(t);
       } catch {
         /* ignore */
       }
     }
     persistAllDrawnLayers(map);
   } catch {
-    // ignore
+    /* ignore */
   }
-  cancelDeletion();
+  cancelDeleteBubble();
 }
 
 /* -------------------- Map init -------------------- */
@@ -663,10 +708,19 @@ const initMap = useDebounceFn(async (): Promise<void> => {
         ev?.originalEvent?.preventDefault?.();
         ev?.originalEvent?.stopPropagation?.();
 
-        // show in-app confirmation modal
-        showDeleteConfirm(tl as L.Layer, isGroupLocal);
-      } catch {
-        /* ignore */
+        // debug: report that the contextmenu handler fired
+        try {
+          console.debug('attachContextDelete:contextmenu', {
+            isGroup: isGroupLocal,
+            layer: tl,
+            ev,
+          });
+        } catch {}
+
+        // show small delete bubble above the element
+        showDeleteBubble(tl as L.Layer, isGroupLocal, ev);
+      } catch (err) {
+        console.warn('attachContextDelete handler failed', err);
       }
     };
 
@@ -950,7 +1004,14 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     mapStore.activeTool = null;
     mapStore.globalEdit = false;
     setMapInteractivity(true);
+    // do not automatically cancel the delete bubble here — allow layer-level handlers to show it
   });
+
+  // hide bubble on common map interactions
+  leafletMap.on('move', cancelDeleteBubble);
+  leafletMap.on('zoom', cancelDeleteBubble);
+  leafletMap.on('pm:drawstart', cancelDeleteBubble);
+  leafletMap.on('pm:create', cancelDeleteBubble);
 
   // Pressing Escape should cancel active Geoman tools (same as right-click)
   const onEscapeKey = (e: KeyboardEvent) => {
@@ -1211,5 +1272,36 @@ watch([citiesWithCoords, countriesWithCoords, regionsWithCoords], () => initMap(
 .btn-cancel {
   background: #f0f0f0;
   color: #222;
+}
+
+/* Inline delete bubble (visual: only the red circular button) */
+.delete-bubble {
+  position: absolute;
+  /* slightly less offset so the button sits snug above the element */
+  transform: translate(-50%, -110%);
+  background: transparent; /* remove white background */
+  padding: 0;
+  box-shadow: none;
+  z-index: 3500;
+  pointer-events: none; /* avoid capturing clicks — let the inner button handle them */
+}
+.delete-bubble > .btn-bubble {
+  pointer-events: auto;
+}
+.btn-bubble {
+  background: #d93f3f;
+  color: #fff;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  border: none;
+  cursor: pointer;
+}
+.btn-bubble:active {
+  transform: scale(0.98);
 }
 </style>
