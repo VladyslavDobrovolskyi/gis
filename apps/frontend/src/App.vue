@@ -37,12 +37,13 @@
     <div
       v-if="deleteBubble.visible"
       class="delete-bubble"
-      :style="{ left: deleteBubble.x + 'px', top: deleteBubble.y + 'px' }"
+      :class="{ fading: deleteBubble.fading }"
+      :style="{ left: (deleteBubble.clientX ?? 0) + 'px', top: (deleteBubble.clientY ?? 0) + 'px' }"
       @click.stop
       role="dialog"
       aria-label="Удалить объект"
     >
-      <button class="btn-bubble" @click="confirmDeletion" aria-label="Удалить">✖</button>
+      <div class="btn-bubble" role="img" aria-hidden="true">✖</div>
     </div>
   </l-map>
 </template>
@@ -421,14 +422,33 @@ const deleteBubble = ref<{
   visible: boolean;
   x: number;
   y: number;
+  clientX?: number | null;
+  clientY?: number | null;
   layer: L.Layer | null;
   isGroup: boolean;
-}>({ visible: false, x: 0, y: 0, layer: null, isGroup: false });
+  fading?: boolean;
+}>({
+  visible: false,
+  x: 0,
+  y: 0,
+  clientX: null,
+  clientY: null,
+  layer: null,
+  isGroup: false,
+  fading: false,
+});
 
 let bubbleClickAwayHandler: ((e: MouseEvent) => void) | null = null;
 let bubbleEscHandler: ((e: KeyboardEvent) => void) | null = null;
+let bubbleAutoHideTimer: number | null = null;
+let bubbleHideAfterFadeTimer: number | null = null;
 
-function showDeleteBubble(target: L.Layer, isGroup = false, ev?: L.LeafletMouseEvent): void {
+function showDeleteBubble(
+  target: L.Layer | null,
+  isGroup = false,
+  ev?: L.LeafletMouseEvent,
+  autoFadeMs = 3000,
+): void {
   const map = mapRef.value?.leafletObject as L.Map | undefined;
   let point: L.Point | null = null;
   if (ev && 'containerPoint' in ev && ev.containerPoint) {
@@ -437,6 +457,7 @@ function showDeleteBubble(target: L.Layer, isGroup = false, ev?: L.LeafletMouseE
     point = map.latLngToContainerPoint(ev.latlng);
   } else if (
     map &&
+    target &&
     (target as LayerWithEach & { getBounds?: () => L.LatLngBounds })?.getBounds &&
     typeof (target as LayerWithEach & { getBounds?: () => L.LatLngBounds }).getBounds === 'function'
   ) {
@@ -449,8 +470,93 @@ function showDeleteBubble(target: L.Layer, isGroup = false, ev?: L.LeafletMouseE
     }
   }
 
+  // fallback: use clientX/clientY relative to map container when available
+  if (!point && ev && ev.originalEvent && (ev.originalEvent as MouseEvent).clientX !== undefined) {
+    try {
+      const me = ev.originalEvent as MouseEvent;
+      const container =
+        (map && map.getContainer && (map.getContainer() as HTMLElement)) ||
+        (document.querySelector('.leaflet-container') as HTMLElement | null);
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        const px = Math.round(me.clientX - rect.left);
+        const py = Math.round(me.clientY - rect.top);
+        point = L.point(px, py);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // clear existing timers and reset fading
+  if (bubbleAutoHideTimer) {
+    window.clearTimeout(bubbleAutoHideTimer);
+    bubbleAutoHideTimer = null;
+  }
+  if (bubbleHideAfterFadeTimer) {
+    window.clearTimeout(bubbleHideAfterFadeTimer);
+    bubbleHideAfterFadeTimer = null;
+  }
+
   deleteBubble.value.layer = target;
   deleteBubble.value.isGroup = isGroup;
+  deleteBubble.value.fading = false;
+  // compute client coordinates for fixed positioning — prefer mouse clientX/clientY (works for clicks on text/SVG)
+  const margin = 8;
+  if (ev && ev.originalEvent && (ev.originalEvent as MouseEvent).clientX !== undefined) {
+    try {
+      const me = ev.originalEvent as MouseEvent;
+      deleteBubble.value.clientX = Math.round(me.clientX);
+      deleteBubble.value.clientY = Math.round(me.clientY);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // If we still don't have client coords, try using the map container rect + point
+  if ((deleteBubble.value.clientX == null || deleteBubble.value.clientY == null) && point && map) {
+    try {
+      const rect = (
+        map.getContainer && (map.getContainer() as HTMLElement)
+      )?.getBoundingClientRect();
+      if (rect) {
+        deleteBubble.value.clientX = Math.round(rect.left + point.x);
+        deleteBubble.value.clientY = Math.round(rect.top + point.y);
+      } else {
+        deleteBubble.value.clientX = Math.round(point.x);
+        deleteBubble.value.clientY = Math.round(point.y);
+      }
+    } catch {
+      if (point) {
+        deleteBubble.value.clientX = Math.round(point.x);
+        deleteBubble.value.clientY = Math.round(point.y);
+      }
+    }
+  }
+
+  // Final fallback: use last known x/y
+  if (deleteBubble.value.clientX == null || deleteBubble.value.clientY == null) {
+    deleteBubble.value.clientX = Math.round(deleteBubble.value.x || 0);
+    deleteBubble.value.clientY = Math.round(deleteBubble.value.y || 0);
+  }
+
+  // Clamp to viewport so it doesn't appear off-screen or stuck at left
+  try {
+    const vw = window.innerWidth || document.documentElement.clientWidth;
+    const vh = window.innerHeight || document.documentElement.clientHeight;
+    deleteBubble.value.clientX = Math.min(
+      Math.max(margin, deleteBubble.value.clientX),
+      vw - margin,
+    );
+    deleteBubble.value.clientY = Math.min(
+      Math.max(margin, deleteBubble.value.clientY),
+      vh - margin,
+    );
+  } catch {
+    /* ignore */
+  }
+
+  // keep legacy x/y for any internal use, but UI uses client coords
   deleteBubble.value.x = Math.max(8, Math.round(point ? point.x : 0));
   deleteBubble.value.y = Math.max(8, Math.round(point ? point.y : 0));
   deleteBubble.value.visible = true;
@@ -460,6 +566,7 @@ function showDeleteBubble(target: L.Layer, isGroup = false, ev?: L.LeafletMouseE
       y: deleteBubble.value.y,
       isGroup,
       target,
+      autoFadeMs,
     });
   } catch {}
   try {
@@ -477,6 +584,16 @@ function showDeleteBubble(target: L.Layer, isGroup = false, ev?: L.LeafletMouseE
   } catch {
     /* ignore */
   }
+
+  // auto-fade after a short timeout (visual only, doesn't delete)
+  try {
+    bubbleAutoHideTimer = window.setTimeout(() => {
+      deleteBubble.value.fading = true;
+      // hide after the fade animation completes (match the CSS transition)
+      bubbleHideAfterFadeTimer = window.setTimeout(() => cancelDeleteBubble(), 220);
+      bubbleAutoHideTimer = null;
+    }, autoFadeMs);
+  } catch {}
 }
 
 function cancelDeleteBubble(): void {
@@ -493,15 +610,16 @@ function cancelDeleteBubble(): void {
   bubbleEscHandler = null;
 }
 
-function confirmDeletion(): void {
+// delete immediately and show visual feedback bubble
+function deleteLayerImmediate(target: L.Layer, isGroup = false, ev?: L.LeafletMouseEvent): void {
   const map = mapRef.value?.leafletObject as L.Map | undefined;
-  const target = deleteBubble.value.layer;
-  if (!map || !target) {
-    cancelDeleteBubble();
-    return;
-  }
+  if (!map || !target) return;
+
+  // show bubble immediately as visual feedback (fade quickly)
+  showDeleteBubble(target, isGroup, ev, 180);
+
   try {
-    if (deleteBubble.value.isGroup && typeof (target as LayerWithEach).eachLayer === 'function') {
+    if (isGroup && typeof (target as LayerWithEach).eachLayer === 'function') {
       try {
         (target as LayerWithEach).eachLayer!((sub: L.Layer) => {
           try {
@@ -525,7 +643,6 @@ function confirmDeletion(): void {
   } catch {
     /* ignore */
   }
-  cancelDeleteBubble();
 }
 
 /* -------------------- Map init -------------------- */
@@ -717,8 +834,12 @@ const initMap = useDebounceFn(async (): Promise<void> => {
           });
         } catch {}
 
-        // show small delete bubble above the element
-        showDeleteBubble(tl as L.Layer, isGroupLocal, ev);
+        // immediate-delete on right-click, then show bubble as visual feedback
+        try {
+          deleteLayerImmediate(tl as L.Layer, isGroupLocal, ev);
+        } catch (err) {
+          console.warn('deleteLayerImmediate failed', err);
+        }
       } catch (err) {
         console.warn('attachContextDelete handler failed', err);
       }
@@ -1276,13 +1397,13 @@ watch([citiesWithCoords, countriesWithCoords, regionsWithCoords], () => initMap(
 
 /* Inline delete bubble (visual: only the red circular button) */
 .delete-bubble {
-  position: absolute;
-  /* slightly less offset so the button sits snug above the element */
-  transform: translate(-50%, -110%);
+  position: fixed; /* fixed to viewport so it is above all elements */
+  /* centre the bubble on the click point */
+  transform: translate(-50%, -50%);
   background: transparent; /* remove white background */
   padding: 0;
   box-shadow: none;
-  z-index: 3500;
+  z-index: 99999; /* very high so it sits above everything */
   pointer-events: none; /* avoid capturing clicks — let the inner button handle them */
 }
 .delete-bubble > .btn-bubble {
@@ -1303,5 +1424,18 @@ watch([citiesWithCoords, countriesWithCoords, regionsWithCoords], () => initMap(
 }
 .btn-bubble:active {
   transform: scale(0.98);
+}
+
+/* fade animation for button (expand + fade only) */
+.delete-bubble .btn-bubble {
+  transition:
+    opacity 160ms cubic-bezier(0.2, 0.9, 0.2, 1),
+    transform 160ms cubic-bezier(0.2, 0.9, 0.2, 1);
+  transform-origin: center center;
+  transform: scale(1);
+}
+.delete-bubble.fading .btn-bubble {
+  opacity: 0;
+  transform: scale(1.6);
 }
 </style>
