@@ -92,8 +92,17 @@ interface MarkerClusterGroupLike extends L.Layer {
   removeLayer(layer: L.Layer): void;
 }
 interface DrawnLayer extends L.Layer {
-  __drawn?: boolean;
+  // stable id assigned to user-created / restored layers
+  drawnId?: string;
   getLatLngs?: () => unknown;
+}
+
+// typed wrapper for PM-enabled layers to avoid using `any`
+interface PMAttachable {
+  pm?: {
+    enable?: () => void;
+    disable?: () => void;
+  };
 }
 interface GeomanPM {
   setLang?(lang: string): void;
@@ -409,14 +418,30 @@ const initMap = useDebounceFn(async (): Promise<void> => {
   }
 
   // collect and persist GeoJSON features currently on the map
+  // small helper to generate stable unique ids for drawn features
+  function generateDrawnId(): string {
+    const g = globalThis as unknown as { crypto?: { randomUUID?: () => string } };
+    if (g && g.crypto && typeof g.crypto.randomUUID === 'function') {
+      try {
+        return g.crypto.randomUUID!();
+      } catch {
+        // fallback
+      }
+    }
+    return `${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffff).toString(36)}`;
+  }
+
+  // collect and persist GeoJSON features currently on the map
   function persistAllDrawnLayers(map: L.Map): void {
     const features: GeoJSON.Feature[] = [];
     map.eachLayer((layer: L.Layer) => {
       try {
-        // only persist layers that are marked as created/restored by Geoman
+        // Persist layers that are not explicitly ignored by Geoman (pmIgnore)
         const maybeDrawn = layer as DrawnLayer;
+        const opts = (layer as unknown as { options?: Record<string, unknown> }).options || {};
+        const pmIgnored = Boolean(opts.pmIgnore);
         if (
-          maybeDrawn.__drawn &&
+          !pmIgnored &&
           typeof (layer as L.Layer & { toGeoJSON?: unknown }).toGeoJSON === 'function'
         ) {
           const geo = (layer as L.Layer & { toGeoJSON: () => GeoJSON.Feature }).toGeoJSON();
@@ -427,6 +452,11 @@ const initMap = useDebounceFn(async (): Promise<void> => {
               geo.geometry?.type === 'LineString' ||
               geo.geometry?.type === 'MultiLineString')
           ) {
+            // ensure feature id and a stable property
+            const id = (maybeDrawn.drawnId ||= generateDrawnId());
+            if (!geo.id) geo.id = id;
+            if (!geo.properties) geo.properties = {} as Record<string, unknown>;
+            (geo.properties as Record<string, unknown>).__id = id;
             features.push(geo);
           }
         }
@@ -434,7 +464,16 @@ const initMap = useDebounceFn(async (): Promise<void> => {
         // ignore layers that fail conversion
       }
     });
-    mapStore.drawn = { type: 'FeatureCollection', features } as GeoJSON.FeatureCollection;
+    // ensure plain-serializable object and write directly to localStorage
+    const fc = JSON.parse(
+      JSON.stringify({ type: 'FeatureCollection', features }),
+    ) as GeoJSON.FeatureCollection;
+    try {
+      localStorage.setItem('map:drawn', JSON.stringify(fc));
+    } catch {
+      // ignore localStorage errors (e.g., quota)
+    }
+    mapStore.drawn = fc;
   }
 
   // restore drawn features from store
@@ -443,6 +482,11 @@ const initMap = useDebounceFn(async (): Promise<void> => {
       onEachFeature(_feature, layer: L.Layer) {
         try {
           layer.addTo(leafletMap);
+          const idFromFeature = (_feature &&
+            (_feature.id ||
+              (_feature.properties && (_feature.properties as Record<string, unknown>).__id))) as
+            | string
+            | undefined;
           if (
             'eachLayer' in layer &&
             typeof (layer as L.Layer & { eachLayer?: (fn: (l: L.Layer) => void) => void })
@@ -450,11 +494,32 @@ const initMap = useDebounceFn(async (): Promise<void> => {
           ) {
             (layer as L.Layer & { eachLayer?: (fn: (l: L.Layer) => void) => void }).eachLayer!(
               (sub: L.Layer) => {
-                (sub as DrawnLayer).__drawn = true;
+                const s = sub as DrawnLayer & PMAttachable & { options?: Record<string, unknown> };
+                s.drawnId = idFromFeature ?? s.drawnId ?? generateDrawnId();
+                s.options = s.options || {};
+                (s.options as Record<string, unknown>).pmIgnore = false;
+                if (s.pm && typeof s.pm.enable === 'function') {
+                  try {
+                    s.pm.enable();
+                  } catch {
+                    /* ignore */
+                  }
+                }
               },
             );
           } else {
-            (layer as DrawnLayer).__drawn = true;
+            const drawnLayer = layer as DrawnLayer &
+              PMAttachable & { options?: Record<string, unknown> };
+            drawnLayer.drawnId = idFromFeature ?? drawnLayer.drawnId ?? generateDrawnId();
+            drawnLayer.options = drawnLayer.options || {};
+            (drawnLayer.options as Record<string, unknown>).pmIgnore = false;
+            if (drawnLayer.pm && typeof drawnLayer.pm.enable === 'function') {
+              try {
+                drawnLayer.pm.enable();
+              } catch {
+                /* ignore */
+              }
+            }
           }
         } catch {
           // ignore
@@ -462,6 +527,61 @@ const initMap = useDebounceFn(async (): Promise<void> => {
       },
     }).addTo(leafletMap);
   }
+
+  // Prevent Geoman from interacting with preloaded layers (countries, regions, cities)
+  function disableGeomanOnPreloadedLayers(map: L.Map): void {
+    map.eachLayer((layer: L.Layer) => {
+      try {
+        // skip user-drawn layers (they have `drawnId` set)
+        if ((layer as DrawnLayer).drawnId) return;
+
+        const maybe = layer as unknown as {
+          options?: Record<string, unknown>;
+          pm?: { disable?: () => void } & Record<string, unknown>;
+          eachLayer?: (fn: (l: L.Layer) => void) => void;
+        };
+
+        maybe.options = maybe.options || {};
+        (maybe.options as Record<string, unknown>).pmIgnore = true;
+        if (maybe.pm && typeof maybe.pm.disable === 'function') {
+          try {
+            maybe.pm.disable();
+          } catch {
+            /* ignore */
+          }
+        }
+
+        // if the layer is a group (e.g., geoJSON group), apply to sublayers as well
+        if (typeof maybe.eachLayer === 'function') {
+          try {
+            maybe.eachLayer!((sub: L.Layer) => {
+              if ((sub as DrawnLayer).drawnId) return;
+              const ms = sub as unknown as {
+                options?: Record<string, unknown>;
+                pm?: { disable?: () => void };
+              };
+              ms.options = ms.options || {};
+              (ms.options as Record<string, unknown>).pmIgnore = true;
+              if (ms.pm && typeof ms.pm.disable === 'function') {
+                try {
+                  ms.pm.disable();
+                } catch {
+                  /* ignore */
+                }
+              }
+            });
+          } catch {
+            // ignore
+          }
+        }
+      } catch {
+        // ignore per-layer errors
+      }
+    });
+  }
+
+  // run once to protect preloaded layers
+  disableGeomanOnPreloadedLayers(leafletMap);
 
   // persist view on move end
   leafletMap.on('moveend', () => {
@@ -485,6 +605,51 @@ const initMap = useDebounceFn(async (): Promise<void> => {
         dragMode: true,
         removalMode: true,
       });
+
+    // Remove/hide rotate control — Geoman may add a rotate button in the actions container.
+    // We hide it with CSS (see style below) and also remove it from DOM after controls are created.
+    try {
+      const removeRotateControls = () => {
+        const toolbar =
+          document.querySelector('.leaflet-pm-toolbar') ||
+          document.querySelector('.leaflet-buttons');
+        if (!toolbar) return;
+        // remove rotate icon elements and their containers
+        toolbar
+          .querySelectorAll('.leaflet-pm-icon-rotate, .control-icon.leaflet-pm-icon-rotate')
+          .forEach((el) => {
+            const container =
+              (el as HTMLElement).closest('.button-container') || (el as HTMLElement).parentElement;
+            if (container) container.remove();
+            else (el as HTMLElement).remove();
+          });
+        // remove any button containers whose title contains "поворот" (case-insensitive)
+        toolbar.querySelectorAll('.button-container').forEach((el) => {
+          try {
+            const title = (el as HTMLElement).getAttribute('title') || '';
+            if (title.toLowerCase().includes('поворот')) (el as HTMLElement).remove();
+          } catch {}
+        });
+        // remove individual actions with a rotate title
+        toolbar.querySelectorAll('.leaflet-pm-action').forEach((el) => {
+          try {
+            const title = (el as HTMLElement).getAttribute('title') || '';
+            if (title.toLowerCase().includes('поворот')) (el as HTMLElement).remove();
+          } catch {}
+        });
+      };
+      // call once after a short delay to let Geoman render its toolbar
+      setTimeout(removeRotateControls, 200);
+      // and observe toolbar for future changes
+      const toolbarNode =
+        document.querySelector('.leaflet-pm-toolbar') || document.querySelector('.leaflet-buttons');
+      if (toolbarNode && typeof MutationObserver !== 'undefined') {
+        const obs = new MutationObserver(removeRotateControls);
+        obs.observe(toolbarNode, { childList: true, subtree: true });
+      }
+    } catch {
+      // ignore failures — this is best-effort
+    }
   }
 
   // Toggle map interactions to avoid input conflicts when Geoman tools are active
@@ -532,7 +697,17 @@ const initMap = useDebounceFn(async (): Promise<void> => {
         typeof getLatLngs === 'function' ? getLatLngs.call(layer) : undefined,
       );
     }
-    (layer as DrawnLayer).__drawn = true;
+    const dl = layer as DrawnLayer & PMAttachable & { options?: Record<string, unknown> };
+    dl.drawnId = dl.drawnId ?? generateDrawnId();
+    dl.options = dl.options || {};
+    (dl.options as Record<string, unknown>).pmIgnore = false;
+    if (dl.pm && typeof dl.pm.enable === 'function') {
+      try {
+        dl.pm.enable();
+      } catch {
+        /* ignore */
+      }
+    }
     persistAllDrawnLayers(leafletMap);
   });
 
@@ -586,7 +761,17 @@ const initMap = useDebounceFn(async (): Promise<void> => {
           measurementText.value = formatDistance(computeLengthLatLngs(pts));
         }
         setTimeout(() => (measurementText.value = ''), 3000);
-        (layer as DrawnLayer).__drawn = true;
+        const dl2 = layer as DrawnLayer & PMAttachable & { options?: Record<string, unknown> };
+        dl2.drawnId = dl2.drawnId ?? generateDrawnId();
+        dl2.options = dl2.options || {};
+        (dl2.options as Record<string, unknown>).pmIgnore = false;
+        if (dl2.pm && typeof dl2.pm.enable === 'function') {
+          try {
+            dl2.pm.enable();
+          } catch {
+            /* ignore */
+          }
+        }
         persistAllDrawnLayers(leafletMap);
       }
     } catch {
@@ -620,6 +805,10 @@ const initMap = useDebounceFn(async (): Promise<void> => {
         markerClusterGroup!.addLayer(marker);
       });
       leafletMap.addLayer(markerClusterGroup);
+      // ensure marker clusters and their markers are ignored by Geoman
+      try {
+        disableGeomanOnPreloadedLayers(leafletMap);
+      } catch {}
     }
   }
 }, 150);
@@ -696,5 +885,23 @@ watch([citiesWithCoords, countriesWithCoords, regionsWithCoords], () => initMap(
 
 .leaflet-pm-toolbar {
   z-index: 1000 !important;
+}
+
+/* Explicitly hide rotate icon and rotate controls (best-effort) */
+.control-icon.leaflet-pm-icon-rotate,
+.leaflet-pm-icon-rotate {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+.button-container[title*='Поворот'],
+.button-container[title*='поворот'] {
+  display: none !important;
+  visibility: hidden !important;
+}
+.leaflet-pm-action[title*='Поворот'],
+.leaflet-pm-action[title*='поворот'] {
+  display: none !important;
+  visibility: hidden !important;
 }
 </style>
