@@ -1227,7 +1227,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
 
   // Geoman initialization
   if (isGeoman(pm)) {
-    if (typeof pm.setLang === 'function') pm.setLang('ru');
+    if (typeof pm.setLang === 'function') pm.setLang('en');
     if (typeof pm.addControls === 'function')
       pm.addControls({
         position: 'topleft',
@@ -1753,22 +1753,6 @@ watch([citiesWithCoords, countriesWithCoords, regionsWithCoords], () => initMap(
 }
 
 /* Explicitly hide rotate icon and rotate controls (best-effort) */
-.control-icon.leaflet-pm-icon-rotate,
-.leaflet-pm-icon-rotate {
-  display: none !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
-}
-.button-container[title*='Поворот'],
-.button-container[title*='поворот'] {
-  display: none !important;
-  visibility: hidden !important;
-}
-.leaflet-pm-action[title*='Поворот'],
-.leaflet-pm-action[title*='поворот'] {
-  display: none !important;
-  visibility: hidden !important;
-}
 
 /* Also hide removal/eraser controls (Russian + English) as a best-effort fallback */
 .control-icon.leaflet-pm-icon-remove,
@@ -1779,9 +1763,6 @@ watch([citiesWithCoords, countriesWithCoords, regionsWithCoords], () => initMap(
   visibility: hidden !important;
   pointer-events: none !important;
 }
-.button-container[title*='Удал'],
-.button-container[title*='удал'],
-.button-container[title*='удалить'],
 .button-container[title*='Remove'],
 .button-container[title*='remove'],
 .button-container[title*='Delete'],
@@ -1791,9 +1772,6 @@ watch([citiesWithCoords, countriesWithCoords, regionsWithCoords], () => initMap(
   display: none !important;
   visibility: hidden !important;
 }
-.leaflet-pm-action[title*='Удал'],
-.leaflet-pm-action[title*='удал'],
-.leaflet-pm-action[title*='удалить'],
 .leaflet-pm-action[title*='Remove'],
 .leaflet-pm-action[title*='remove'],
 .leaflet-pm-action[title*='Delete'],
