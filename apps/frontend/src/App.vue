@@ -448,10 +448,61 @@ try {
 } catch {
   // ignore
 }
+// register global key & mouse listeners during setup
+try {
+  document.addEventListener('mousemove', mouseMoveHandler);
+} catch {
+  /* ignore */
+}
+
+const onEscapeKey = (e: KeyboardEvent) => {
+  if (e.key !== 'Escape') return;
+  try {
+    const leafletMap = mapRef.value?.leafletObject as L.Map | undefined;
+    const pmLocal = (leafletMap as unknown as { pm?: unknown })?.pm;
+    if (isGeoman(pmLocal)) {
+      try {
+        if (typeof pmLocal.disableDraw === 'function') pmLocal.disableDraw();
+      } catch {}
+      try {
+        if (typeof pmLocal.disableGlobalEditMode === 'function') pmLocal.disableGlobalEditMode();
+      } catch {}
+    }
+    if (leafletMap) {
+      try {
+        if (leafletMap.dragging && !leafletMap.dragging.enabled()) leafletMap.dragging.enable();
+        if (leafletMap.scrollWheelZoom && typeof leafletMap.scrollWheelZoom.enable === 'function')
+          leafletMap.scrollWheelZoom.enable();
+        if (leafletMap.doubleClickZoom && typeof leafletMap.doubleClickZoom.enable === 'function')
+          leafletMap.doubleClickZoom.enable();
+        if (leafletMap.boxZoom && typeof leafletMap.boxZoom.enable === 'function')
+          leafletMap.boxZoom.enable();
+        if (leafletMap.keyboard && typeof leafletMap.keyboard.enable === 'function')
+          leafletMap.keyboard.enable();
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  mapStore.activeTool = null;
+  mapStore.globalEdit = false;
+};
+try {
+  document.addEventListener('keydown', onEscapeKey);
+} catch {
+  /* ignore */
+}
+
 // remove on unmount
 onBeforeUnmount(() => {
   try {
     document.removeEventListener('mousemove', mouseMoveHandler);
+  } catch {}
+  try {
+    document.removeEventListener('keydown', onEscapeKey);
   } catch {}
 });
 
@@ -1403,34 +1454,6 @@ const initMap = useDebounceFn(async (): Promise<void> => {
   leafletMap.on('zoom', cancelDeleteBubble);
   leafletMap.on('pm:drawstart', cancelDeleteBubble);
   leafletMap.on('pm:create', cancelDeleteBubble);
-
-  // Pressing Escape should cancel active Geoman tools (same as right-click)
-  const onEscapeKey = (e: KeyboardEvent) => {
-    if (e.key !== 'Escape') return;
-    try {
-      if (isGeoman(pm)) {
-        if (typeof pm.disableDraw === 'function') pm.disableDraw();
-        if (typeof pm.disableGlobalEditMode === 'function') pm.disableGlobalEditMode();
-      }
-    } catch {
-      // ignore
-    }
-    mapStore.activeTool = null;
-    mapStore.globalEdit = false;
-    setMapInteractivity(true);
-  };
-  try {
-    document.addEventListener('keydown', onEscapeKey);
-  } catch {
-    // ignore
-  }
-  onBeforeUnmount(() => {
-    try {
-      document.removeEventListener('keydown', onEscapeKey);
-    } catch {
-      // ignore
-    }
-  });
 
   // Measurement wiring: call top-level helper functions that manage measurements
   const mapEvents = leafletMap as L.Map;
