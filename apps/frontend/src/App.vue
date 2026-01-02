@@ -31,7 +31,26 @@
       color="blue"
       :fill-opacity="0.25"
     />
-    <div v-if="measurementText" class="measurement-badge">{{ measurementText }}</div>
+    <Transition name="measurement-fade">
+      <div v-if="measurementText" class="measurement-badge" role="status" aria-live="polite">
+        <Transition name="measurement-text" mode="out-in">
+          <span :key="measurementText">{{ measurementText }}</span>
+        </Transition>
+      </div>
+    </Transition>
+
+    <!-- Small inline delete bubble (appears over a drawn element) -->
+    <div
+      v-if="deleteBubble.visible"
+      class="delete-bubble"
+      :class="{ fading: deleteBubble.fading }"
+      :style="{ left: (deleteBubble.clientX ?? 0) + 'px', top: (deleteBubble.clientY ?? 0) + 'px' }"
+      @click.stop
+      role="dialog"
+      aria-label="Удалить объект"
+    >
+      <div class="btn-bubble" role="img" aria-hidden="true">✖</div>
+    </div>
   </l-map>
 </template>
 
@@ -104,6 +123,10 @@ interface PMAttachable {
     disable?: () => void;
   };
 }
+
+// Combined typed alias for layers that are drawn and PM-attachable with optional options
+type DrawnPmLayer = DrawnLayer & PMAttachable & { options?: Record<string, unknown> };
+
 interface GeomanPM {
   setLang?(lang: string): void;
   addControls?(opts: {
@@ -272,7 +295,11 @@ const mapStore = useMapStore();
 
 // initialize local measurement refs from store (if present)
 if (mapStore.measurementMode) measurementMode.value = mapStore.measurementMode;
-if (mapStore.measurementText) measurementText.value = mapStore.measurementText;
+// Do NOT restore a previous measurement text on startup — avoid showing stale measurements.
+// We'll clear it explicitly after the map initializes so measurements appear only during
+// active drawing or hover interactions.
+measurementText.value = '';
+mapStore.measurementText = '';
 
 // keep store in sync with reactive refs
 watch(measurementMode, (v) => (mapStore.measurementMode = v));
@@ -375,22 +402,267 @@ function stopDrawMode(): void {
 }
 
 function attachEditListeners(layer: PmLayer): void {
-  measurementMode.value =
-    layer instanceof L.Polygon ? 'area' : layer instanceof L.Polyline ? 'distance' : null;
+  // support polygons, polylines and circles
+  if (layer instanceof L.Circle) {
+    measurementMode.value = 'area';
+  } else {
+    measurementMode.value =
+      layer instanceof L.Polygon ? 'area' : layer instanceof L.Polyline ? 'distance' : null;
+  }
   if (!measurementMode.value) return;
+
   const update = (): void => {
-    if (typeof layer.getLatLngs === 'function') {
-      const ll = layer.getLatLngs() as unknown;
-      const pts: L.LatLng[] = ([] as L.LatLng[]).concat(...(ll as unknown as L.LatLng[][]));
-      updateMeasurementFromPoints(pts);
+    try {
+      if (layer instanceof L.Circle) {
+        const r = (layer as L.Circle).getRadius(); // meters
+        const area = Math.PI * r * r;
+        measurementText.value = `${formatDistance(r)} • ${formatArea(area)}`;
+        return;
+      }
+      if (typeof layer.getLatLngs === 'function') {
+        const ll = layer.getLatLngs() as unknown;
+        const pts: L.LatLng[] = ([] as L.LatLng[]).concat(...(ll as unknown as L.LatLng[][]));
+        updateMeasurementFromPoints(pts);
+      }
+    } catch {
+      /* ignore */
     }
   };
+
   if (layer.on) layer.on('pm:edit', update);
   if (layer.on) layer.on('pm:dragend', update);
   if (layer.on) layer.on('pm:update', update);
   update();
 }
 
+// Hover listeners: show measurement badge when cursor is over a drawn layer
+// track last mouse position to avoid clearing on hover between layers (e.g., marker overlays)
+let lastMouseX = 0;
+let lastMouseY = 0;
+function mouseMoveHandler(e: MouseEvent) {
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
+}
+try {
+  document.addEventListener('mousemove', mouseMoveHandler);
+} catch {
+  // ignore
+}
+// register global key & mouse listeners during setup
+try {
+  document.addEventListener('mousemove', mouseMoveHandler);
+} catch {
+  /* ignore */
+}
+
+const onEscapeKey = (e: KeyboardEvent) => {
+  if (e.key !== 'Escape') return;
+  try {
+    const leafletMap = mapRef.value?.leafletObject as L.Map | undefined;
+    const pmLocal = (leafletMap as unknown as { pm?: unknown })?.pm;
+    if (isGeoman(pmLocal)) {
+      try {
+        if (typeof pmLocal.disableDraw === 'function') pmLocal.disableDraw();
+      } catch {}
+      try {
+        if (typeof pmLocal.disableGlobalEditMode === 'function') pmLocal.disableGlobalEditMode();
+      } catch {}
+    }
+    if (leafletMap) {
+      try {
+        if (leafletMap.dragging && !leafletMap.dragging.enabled()) leafletMap.dragging.enable();
+        if (leafletMap.scrollWheelZoom && typeof leafletMap.scrollWheelZoom.enable === 'function')
+          leafletMap.scrollWheelZoom.enable();
+        if (leafletMap.doubleClickZoom && typeof leafletMap.doubleClickZoom.enable === 'function')
+          leafletMap.doubleClickZoom.enable();
+        if (leafletMap.boxZoom && typeof leafletMap.boxZoom.enable === 'function')
+          leafletMap.boxZoom.enable();
+        if (leafletMap.keyboard && typeof leafletMap.keyboard.enable === 'function')
+          leafletMap.keyboard.enable();
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  mapStore.activeTool = null;
+  mapStore.globalEdit = false;
+};
+try {
+  document.addEventListener('keydown', onEscapeKey);
+} catch {
+  /* ignore */
+}
+
+// remove on unmount
+onBeforeUnmount(() => {
+  try {
+    document.removeEventListener('mousemove', mouseMoveHandler);
+  } catch {}
+  try {
+    document.removeEventListener('keydown', onEscapeKey);
+  } catch {}
+});
+
+// Debounce/ownership to handle fast mouse transitions between layers
+let hoverClearTimer: number | null = null;
+let hoverActiveLayer: L.Layer | null = null;
+
+const hoverAttached = new WeakMap<
+  L.Layer,
+  { onOver?: (e: L.LeafletMouseEvent) => void; onOut?: (e: L.LeafletMouseEvent) => void }
+>();
+
+function attachHoverListeners(layer: L.Layer | null | undefined): void {
+  if (!layer) return;
+  const maybe = layer as L.Layer & {
+    __hoverAttached?: boolean;
+    eachLayer?: (fn: (l: L.Layer) => void) => void;
+  };
+  if (maybe.__hoverAttached) return;
+  maybe.__hoverAttached = true;
+
+  const owner = maybe;
+  const onOver = (e?: L.LeafletMouseEvent) => {
+    try {
+      // cancel any pending clear and mark this layer as active
+      if (hoverClearTimer) {
+        window.clearTimeout(hoverClearTimer);
+        hoverClearTimer = null;
+      }
+      hoverActiveLayer = owner;
+
+      const target = (e && (e.target as L.Layer)) ?? maybe;
+      const l = target as PmLayer & DrawnLayer;
+      if (!l) return;
+
+      // Circles don't provide getLatLngs — handle them first
+      if (l instanceof L.Circle) {
+        measurementMode.value = 'area';
+        const r = (l as L.Circle).getRadius();
+        const area = Math.PI * r * r;
+        measurementText.value = `${formatDistance(r)} • ${formatArea(area)}`;
+        return;
+      }
+
+      if (typeof l.getLatLngs !== 'function') return;
+      const ll = l.getLatLngs() as unknown;
+      const pts: L.LatLng[] = ([] as L.LatLng[]).concat(...(ll as unknown as L.LatLng[][]));
+      if (l instanceof L.Polygon) {
+        measurementMode.value = 'area';
+        measurementText.value = formatArea(computeAreaLatLngs(pts));
+      } else if (l instanceof L.Polyline) {
+        measurementMode.value = 'distance';
+        measurementText.value = formatDistance(computeLengthLatLngs(pts));
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+  const onOut = () => {
+    // schedule a clear; cancelable if another layer's onOver fires
+    if (hoverClearTimer) window.clearTimeout(hoverClearTimer);
+    const ownerLayer = maybe;
+    hoverClearTimer = window.setTimeout(() => {
+      try {
+        // if hover moved to another attached layer, don't clear
+        if (hoverActiveLayer && hoverActiveLayer !== ownerLayer) return;
+
+        const el = document.elementFromPoint(lastMouseX, lastMouseY) as HTMLElement | null;
+        if (el) {
+          let cur: HTMLElement | null = el;
+          while (cur) {
+            const cls = (cur.className || '') as string;
+            if (
+              cls.includes &&
+              (cls.includes('leaflet-marker-icon') || cls.includes('leaflet-interactive'))
+            ) {
+              // still over a leaflet vector or marker — keep measurement
+              return;
+            }
+            cur = cur.parentElement;
+          }
+        }
+      } catch {
+        // ignore and clear
+      }
+      // proceed to clear
+      hoverActiveLayer = null;
+      measurementText.value = '';
+      measurementMode.value = null;
+      hoverClearTimer = null;
+    }, 160);
+  };
+
+  // attach to this layer
+  try {
+    const pmLayer = maybe as PmLayer;
+    if (pmLayer.on) pmLayer.on('mouseover', onOver as (ev?: L.LeafletMouseEvent) => void);
+    if (pmLayer.on) pmLayer.on('mouseout', onOut as (ev?: L.LeafletMouseEvent) => void);
+  } catch {
+    // ignore
+  }
+
+  // also attach to sublayers if present
+  if (typeof maybe.eachLayer === 'function') {
+    try {
+      maybe.eachLayer!((sub) => {
+        try {
+          const s = sub as L.Layer & { __hoverAttached?: boolean } & PmLayer;
+          if (s.__hoverAttached) return;
+          s.__hoverAttached = true;
+          if (s.on) s.on('mouseover', onOver as (ev?: L.LeafletMouseEvent) => void);
+          if (s.on) s.on('mouseout', onOut as (ev?: L.LeafletMouseEvent) => void);
+        } catch {
+          /* ignore */
+        }
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+  hoverAttached.set(maybe, { onOver, onOut });
+}
+
+function detachHoverListeners(layer: L.Layer | null | undefined): void {
+  if (!layer) return;
+  const maybe = layer as L.Layer & {
+    __hoverAttached?: boolean;
+    eachLayer?: (fn: (l: L.Layer) => void) => void;
+  } & PmLayer;
+  const h = hoverAttached.get(maybe);
+  if (h && maybe.off) {
+    try {
+      if (h.onOver && maybe.off)
+        maybe.off('mouseover', h.onOver as (ev?: L.LeafletMouseEvent) => void);
+      if (h.onOut && maybe.off)
+        maybe.off('mouseout', h.onOut as (ev?: L.LeafletMouseEvent) => void);
+    } catch {
+      /* ignore */
+    }
+  }
+  hoverAttached.delete(maybe);
+  maybe.__hoverAttached = false;
+  // if this layer was the active hover, clear the ownership and any pending timer
+  try {
+    if (hoverActiveLayer === maybe) hoverActiveLayer = null;
+    if (hoverClearTimer) {
+      window.clearTimeout(hoverClearTimer);
+      hoverClearTimer = null;
+    }
+  } catch {}
+  if (typeof maybe.eachLayer === 'function') {
+    try {
+      maybe.eachLayer!((sub) => {
+        try {
+          (sub as L.Layer & { __hoverAttached?: boolean }).__hoverAttached = false;
+        } catch {}
+      });
+    } catch {}
+  }
+}
 function detachEditListeners(layer: PmLayer) {
   if (!layer) return;
   if (layer.off) layer.off('pm:edit');
@@ -399,7 +671,322 @@ function detachEditListeners(layer: PmLayer) {
   measurementText.value = '';
 }
 
+// typed helper for layers that expose `eachLayer`
+interface LayerWithEach {
+  eachLayer?: (fn: (l: L.Layer) => void) => void;
+}
+
+// Delete bubble state (appears over a drawn element) ✅
+const deleteBubble = ref<{
+  visible: boolean;
+  x: number;
+  y: number;
+  clientX?: number | null;
+  clientY?: number | null;
+  layer: L.Layer | null;
+  isGroup: boolean;
+  fading?: boolean;
+}>({
+  visible: false,
+  x: 0,
+  y: 0,
+  clientX: null,
+  clientY: null,
+  layer: null,
+  isGroup: false,
+  fading: false,
+});
+
+let bubbleClickAwayHandler: ((e: MouseEvent) => void) | null = null;
+let bubbleEscHandler: ((e: KeyboardEvent) => void) | null = null;
+let bubbleAutoHideTimer: number | null = null;
+let bubbleHideAfterFadeTimer: number | null = null;
+
+function showDeleteBubble(
+  target: L.Layer | null,
+  isGroup = false,
+  ev?: L.LeafletMouseEvent,
+  autoFadeMs = 3000,
+): void {
+  const map = mapRef.value?.leafletObject as L.Map | undefined;
+  let point: L.Point | null = null;
+  if (ev && 'containerPoint' in ev && ev.containerPoint) {
+    point = ev.containerPoint;
+  } else if (ev && ev.latlng && map) {
+    point = map.latLngToContainerPoint(ev.latlng);
+  } else if (
+    map &&
+    target &&
+    (target as LayerWithEach & { getBounds?: () => L.LatLngBounds })?.getBounds &&
+    typeof (target as LayerWithEach & { getBounds?: () => L.LatLngBounds }).getBounds === 'function'
+  ) {
+    try {
+      const lw = target as LayerWithEach & { getBounds?: () => L.LatLngBounds };
+      const center = lw.getBounds!().getCenter();
+      point = map.latLngToContainerPoint(center);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // fallback: use clientX/clientY relative to map container when available
+  if (!point && ev && ev.originalEvent && (ev.originalEvent as MouseEvent).clientX !== undefined) {
+    try {
+      const me = ev.originalEvent as MouseEvent;
+      const container =
+        (map && map.getContainer && (map.getContainer() as HTMLElement)) ||
+        (document.querySelector('.leaflet-container') as HTMLElement | null);
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        const px = Math.round(me.clientX - rect.left);
+        const py = Math.round(me.clientY - rect.top);
+        point = L.point(px, py);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // clear existing timers and reset fading
+  if (bubbleAutoHideTimer) {
+    window.clearTimeout(bubbleAutoHideTimer);
+    bubbleAutoHideTimer = null;
+  }
+  if (bubbleHideAfterFadeTimer) {
+    window.clearTimeout(bubbleHideAfterFadeTimer);
+    bubbleHideAfterFadeTimer = null;
+  }
+
+  deleteBubble.value.layer = target;
+  deleteBubble.value.isGroup = isGroup;
+  deleteBubble.value.fading = false;
+  // compute client coordinates for fixed positioning — prefer mouse clientX/clientY (works for clicks on text/SVG)
+  const margin = 8;
+  if (ev && ev.originalEvent && (ev.originalEvent as MouseEvent).clientX !== undefined) {
+    try {
+      const me = ev.originalEvent as MouseEvent;
+      deleteBubble.value.clientX = Math.round(me.clientX);
+      deleteBubble.value.clientY = Math.round(me.clientY);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // If we still don't have client coords, try using the map container rect + point
+  if ((deleteBubble.value.clientX == null || deleteBubble.value.clientY == null) && point && map) {
+    try {
+      const rect = (
+        map.getContainer && (map.getContainer() as HTMLElement)
+      )?.getBoundingClientRect();
+      if (rect) {
+        deleteBubble.value.clientX = Math.round(rect.left + point.x);
+        deleteBubble.value.clientY = Math.round(rect.top + point.y);
+      } else {
+        deleteBubble.value.clientX = Math.round(point.x);
+        deleteBubble.value.clientY = Math.round(point.y);
+      }
+    } catch {
+      if (point) {
+        deleteBubble.value.clientX = Math.round(point.x);
+        deleteBubble.value.clientY = Math.round(point.y);
+      }
+    }
+  }
+
+  // Final fallback: use last known x/y
+  if (deleteBubble.value.clientX == null || deleteBubble.value.clientY == null) {
+    deleteBubble.value.clientX = Math.round(deleteBubble.value.x || 0);
+    deleteBubble.value.clientY = Math.round(deleteBubble.value.y || 0);
+  }
+
+  // Clamp to viewport so it doesn't appear off-screen or stuck at left
+  try {
+    const vw = window.innerWidth || document.documentElement.clientWidth;
+    const vh = window.innerHeight || document.documentElement.clientHeight;
+    deleteBubble.value.clientX = Math.min(
+      Math.max(margin, deleteBubble.value.clientX),
+      vw - margin,
+    );
+    deleteBubble.value.clientY = Math.min(
+      Math.max(margin, deleteBubble.value.clientY),
+      vh - margin,
+    );
+  } catch {
+    /* ignore */
+  }
+
+  // keep legacy x/y for any internal use, but UI uses client coords
+  deleteBubble.value.x = Math.max(8, Math.round(point ? point.x : 0));
+  deleteBubble.value.y = Math.max(8, Math.round(point ? point.y : 0));
+  deleteBubble.value.visible = true;
+  try {
+    console.debug('showDeleteBubble', {
+      x: deleteBubble.value.x,
+      y: deleteBubble.value.y,
+      isGroup,
+      target,
+      autoFadeMs,
+    });
+  } catch {}
+  try {
+    bubbleClickAwayHandler = (e: MouseEvent) => {
+      // click outside bubble closes it
+      const el = document.querySelector('.delete-bubble');
+      if (el && e.target && el.contains(e.target as Node)) return;
+      cancelDeleteBubble();
+    };
+    bubbleEscHandler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') cancelDeleteBubble();
+    };
+    document.addEventListener('click', bubbleClickAwayHandler);
+    document.addEventListener('keydown', bubbleEscHandler);
+  } catch {
+    /* ignore */
+  }
+
+  // auto-fade after a short timeout (visual only, doesn't delete)
+  try {
+    bubbleAutoHideTimer = window.setTimeout(() => {
+      deleteBubble.value.fading = true;
+      // hide after the fade animation completes (match the CSS transition)
+      bubbleHideAfterFadeTimer = window.setTimeout(() => cancelDeleteBubble(), 220);
+      bubbleAutoHideTimer = null;
+    }, autoFadeMs);
+  } catch {}
+}
+
+function cancelDeleteBubble(): void {
+  deleteBubble.value.visible = false;
+  deleteBubble.value.layer = null;
+  deleteBubble.value.isGroup = false;
+  try {
+    if (bubbleClickAwayHandler) document.removeEventListener('click', bubbleClickAwayHandler);
+    if (bubbleEscHandler) document.removeEventListener('keydown', bubbleEscHandler);
+  } catch {
+    /* ignore */
+  }
+  bubbleClickAwayHandler = null;
+  bubbleEscHandler = null;
+}
+
+// delete immediately and show visual feedback bubble
+function deleteLayerImmediate(target: L.Layer, isGroup = false, ev?: L.LeafletMouseEvent): void {
+  const map = mapRef.value?.leafletObject as L.Map | undefined;
+  if (!map || !target) return;
+
+  // show bubble immediately as visual feedback (fade quickly)
+  showDeleteBubble(target, isGroup, ev, 180);
+
+  try {
+    // detach hover listeners before removal
+    try {
+      detachHoverListeners(target as L.Layer);
+    } catch {}
+
+    if (isGroup && typeof (target as LayerWithEach).eachLayer === 'function') {
+      try {
+        (target as LayerWithEach).eachLayer!((sub: L.Layer) => {
+          try {
+            // detach hover listeners for sublayers
+            try {
+              detachHoverListeners(sub);
+            } catch {}
+            if (map.hasLayer(sub)) map.removeLayer(sub);
+          } catch {
+            /* ignore */
+          }
+        });
+      } catch {
+        /* ignore */
+      }
+    } else {
+      try {
+        const t = target as L.Layer;
+        try {
+          detachHoverListeners(t);
+        } catch {}
+        if (map.hasLayer(t)) map.removeLayer(t);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    // clear any hover/measurement state immediately
+    try {
+      if (hoverClearTimer) {
+        window.clearTimeout(hoverClearTimer);
+        hoverClearTimer = null;
+      }
+      hoverActiveLayer = null;
+      measurementText.value = '';
+      measurementMode.value = null;
+    } catch {}
+
+    persistAllDrawnLayers(map);
+  } catch {
+    /* ignore */
+  }
+}
+
 /* -------------------- Map init -------------------- */
+
+// small helper to generate stable unique ids for drawn features
+function generateDrawnId(): string {
+  const g = globalThis as unknown as { crypto?: { randomUUID?: () => string } };
+  if (g && g.crypto && typeof g.crypto.randomUUID === 'function') {
+    try {
+      return g.crypto.randomUUID!();
+    } catch {
+      // fallback
+    }
+  }
+  return `${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffff).toString(36)}`;
+}
+
+// collect and persist GeoJSON features currently on the map
+function persistAllDrawnLayers(map: L.Map): void {
+  const features: GeoJSON.Feature[] = [];
+  map.eachLayer((layer: L.Layer) => {
+    try {
+      // Persist layers that are not explicitly ignored by Geoman (pmIgnore)
+      const maybeDrawn = layer as DrawnLayer;
+      const opts = (layer as unknown as { options?: Record<string, unknown> }).options || {};
+      const pmIgnored = Boolean(opts.pmIgnore);
+      if (
+        !pmIgnored &&
+        typeof (layer as L.Layer & { toGeoJSON?: unknown }).toGeoJSON === 'function'
+      ) {
+        const geo = (layer as L.Layer & { toGeoJSON: () => GeoJSON.Feature }).toGeoJSON();
+        if (
+          geo &&
+          (geo.geometry?.type === 'Polygon' ||
+            geo.geometry?.type === 'MultiPolygon' ||
+            geo.geometry?.type === 'LineString' ||
+            geo.geometry?.type === 'MultiLineString')
+        ) {
+          // ensure feature id and a stable property
+          const id = (maybeDrawn.drawnId ||= generateDrawnId());
+          if (!geo.id) geo.id = id;
+          if (!geo.properties) geo.properties = {} as Record<string, unknown>;
+          (geo.properties as Record<string, unknown>).__id = id;
+          features.push(geo);
+        }
+      }
+    } catch {
+      // ignore layers that fail conversion
+    }
+  });
+  // ensure plain-serializable object and write directly to localStorage
+  const fc = JSON.parse(
+    JSON.stringify({ type: 'FeatureCollection', features }),
+  ) as GeoJSON.FeatureCollection;
+  try {
+    localStorage.setItem('map:drawn', JSON.stringify(fc));
+  } catch {
+    // ignore localStorage errors (e.g., quota)
+  }
+  mapStore.drawn = fc;
+}
 
 const initMap = useDebounceFn(async (): Promise<void> => {
   await nextTick();
@@ -417,7 +1004,6 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     }
   }
 
-  // collect and persist GeoJSON features currently on the map
   // small helper to generate stable unique ids for drawn features
   function generateDrawnId(): string {
     const g = globalThis as unknown as { crypto?: { randomUUID?: () => string } };
@@ -477,6 +1063,8 @@ const initMap = useDebounceFn(async (): Promise<void> => {
   }
 
   // Attach right-click-to-delete handler to a layer or its sublayers
+
+  // Attach right-click-to-delete handler to a layer or its sublayers
   function attachContextDelete(layer: L.Layer | null | undefined): void {
     if (!layer) return;
     const maybe = layer as L.Layer & {
@@ -493,49 +1081,50 @@ const initMap = useDebounceFn(async (): Promise<void> => {
 
     const handler = (ev?: L.LeafletMouseEvent) => {
       try {
+        // determine clicked layer (ev.target if available), otherwise fallback to maybe
+        const clickedLayer = ev?.target as L.Layer | undefined;
+        const targetLayer = clickedLayer ?? maybe;
+
         // ensure we only delete user-created layers (they have drawnId)
+        const tl = targetLayer as LayerWithEach & DrawnLayer;
+        const isGroupLocal = typeof (tl as LayerWithEach).eachLayer === 'function';
         const isUserLayer =
-          Boolean((maybe as DrawnLayer).drawnId) ||
-          (typeof maybe.eachLayer === 'function' &&
+          Boolean((tl as DrawnLayer).drawnId) ||
+          (isGroupLocal &&
             (() => {
               let found = false;
-              maybe.eachLayer!((sub) => {
-                if ((sub as DrawnLayer).drawnId) found = true;
-              });
+              try {
+                (tl as LayerWithEach).eachLayer!((sub: L.Layer) => {
+                  if ((sub as DrawnLayer).drawnId) found = true;
+                });
+              } catch {
+                /* ignore */
+              }
               return found;
             })());
         if (!isUserLayer) return;
-
-        // confirm with the user
-        const ok = typeof window !== 'undefined' ? window.confirm('Удалить объект?') : true;
-        if (!ok) return;
 
         // prevent default browser menu
         ev?.originalEvent?.preventDefault?.();
         ev?.originalEvent?.stopPropagation?.();
 
-        // remove layer(s) from the map
+        // debug: report that the contextmenu handler fired
         try {
-          const map = mapRef.value?.leafletObject as L.Map | undefined;
-          if (!map) return;
-          if (typeof maybe.eachLayer === 'function') {
-            maybe.eachLayer!((sub) => {
-              try {
-                if (map.hasLayer(sub)) map.removeLayer(sub);
-              } catch {
-                /* ignore */
-              }
-            });
-          } else {
-            if (map.hasLayer(maybe)) map.removeLayer(maybe);
-          }
-          // persist new state
-          persistAllDrawnLayers(map);
-        } catch {
-          /* ignore */
+          console.debug('attachContextDelete:contextmenu', {
+            isGroup: isGroupLocal,
+            layer: tl,
+            ev,
+          });
+        } catch {}
+
+        // immediate-delete on right-click, then show bubble as visual feedback
+        try {
+          deleteLayerImmediate(tl as L.Layer, isGroupLocal, ev);
+        } catch (err) {
+          console.warn('deleteLayerImmediate failed', err);
         }
-      } catch {
-        /* ignore */
+      } catch (err) {
+        console.warn('attachContextDelete handler failed', err);
       }
     };
 
@@ -550,7 +1139,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     // also attach to sublayers for groups
     if (typeof maybe.eachLayer === 'function') {
       try {
-        maybe.eachLayer!((sub) => {
+        maybe.eachLayer!((sub: L.Layer) => {
           const s = sub as L.Layer & {
             __contextDeleteAttached?: boolean;
             on?: (ev: string, handler: (ev?: L.LeafletEvent) => void) => void;
@@ -583,7 +1172,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
           ) {
             (layer as L.Layer & { eachLayer?: (fn: (l: L.Layer) => void) => void }).eachLayer!(
               (sub: L.Layer) => {
-                const s = sub as DrawnLayer & PMAttachable & { options?: Record<string, unknown> };
+                const s = sub as DrawnPmLayer;
                 s.drawnId = idFromFeature ?? s.drawnId ?? generateDrawnId();
                 s.options = s.options || {};
                 (s.options as Record<string, unknown>).pmIgnore = false;
@@ -596,6 +1185,8 @@ const initMap = useDebounceFn(async (): Promise<void> => {
                 }
                 // attach right-click-to-delete handler to restored sublayer
                 attachContextDelete(sub);
+                // show measurements on hover
+                attachHoverListeners(sub);
               },
             );
           } else {
@@ -613,6 +1204,8 @@ const initMap = useDebounceFn(async (): Promise<void> => {
             }
             // attach right-click-to-delete handler to restored layer
             attachContextDelete(layer);
+            // show measurements on hover
+            attachHoverListeners(layer);
           }
         } catch {
           // ignore
@@ -685,7 +1278,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
 
   // Geoman initialization
   if (isGeoman(pm)) {
-    if (typeof pm.setLang === 'function') pm.setLang('ru');
+    if (typeof pm.setLang === 'function') pm.setLang('en');
     if (typeof pm.addControls === 'function')
       pm.addControls({
         position: 'topleft',
@@ -707,6 +1300,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
           document.querySelector('.leaflet-pm-toolbar') ||
           document.querySelector('.leaflet-buttons');
         if (!toolbar) return;
+
         // remove rotate icon elements and their containers
         toolbar
           .querySelectorAll('.leaflet-pm-icon-rotate, .control-icon.leaflet-pm-icon-rotate')
@@ -716,18 +1310,49 @@ const initMap = useDebounceFn(async (): Promise<void> => {
             if (container) container.remove();
             else (el as HTMLElement).remove();
           });
-        // remove any button containers whose title contains "поворот" (case-insensitive)
+
+        // Also remove eraser / removal controls (best-effort): look for common icon classes and titles
+        toolbar
+          .querySelectorAll(
+            '.leaflet-pm-icon-remove, .leaflet-pm-icon-delete, .leaflet-pm-icon-trash, .leaflet-pm-icon-removal, .control-icon.leaflet-pm-icon-remove',
+          )
+          .forEach((el) => {
+            const container =
+              (el as HTMLElement).closest('.button-container') || (el as HTMLElement).parentElement;
+            if (container) container.remove();
+            else (el as HTMLElement).remove();
+          });
+
+        // remove any button containers whose title contains rotate or delete keywords (case-insensitive)
         toolbar.querySelectorAll('.button-container').forEach((el) => {
           try {
             const title = (el as HTMLElement).getAttribute('title') || '';
-            if (title.toLowerCase().includes('поворот')) (el as HTMLElement).remove();
+            const t = title.toLowerCase();
+            if (
+              t.includes('поворот') ||
+              t.includes('удал') ||
+              t.includes('удалить') ||
+              t.includes('remove') ||
+              t.includes('delete') ||
+              t.includes('trash')
+            )
+              (el as HTMLElement).remove();
           } catch {}
         });
-        // remove individual actions with a rotate title
+
+        // remove individual actions with rotate/delete titles
         toolbar.querySelectorAll('.leaflet-pm-action').forEach((el) => {
           try {
             const title = (el as HTMLElement).getAttribute('title') || '';
-            if (title.toLowerCase().includes('поворот')) (el as HTMLElement).remove();
+            const t = title.toLowerCase();
+            if (
+              t.includes('поворот') ||
+              t.includes('удал') ||
+              t.includes('delete') ||
+              t.includes('remove') ||
+              t.includes('trash')
+            )
+              (el as HTMLElement).remove();
           } catch {}
         });
       };
@@ -790,7 +1415,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
         typeof getLatLngs === 'function' ? getLatLngs.call(layer) : undefined,
       );
     }
-    const dl = layer as DrawnLayer & PMAttachable & { options?: Record<string, unknown> };
+    const dl = layer as DrawnPmLayer;
     dl.drawnId = dl.drawnId ?? generateDrawnId();
     dl.options = dl.options || {};
     (dl.options as Record<string, unknown>).pmIgnore = false;
@@ -803,6 +1428,8 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     }
     // attach right-click-to-delete handler
     attachContextDelete(layer);
+    // attach hover listeners to show measurements
+    attachHoverListeners(layer);
     persistAllDrawnLayers(leafletMap);
   });
 
@@ -819,35 +1446,14 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     mapStore.activeTool = null;
     mapStore.globalEdit = false;
     setMapInteractivity(true);
+    // do not automatically cancel the delete bubble here — allow layer-level handlers to show it
   });
 
-  // Pressing Escape should cancel active Geoman tools (same as right-click)
-  const onEscapeKey = (e: KeyboardEvent) => {
-    if (e.key !== 'Escape') return;
-    try {
-      if (isGeoman(pm)) {
-        if (typeof pm.disableDraw === 'function') pm.disableDraw();
-        if (typeof pm.disableGlobalEditMode === 'function') pm.disableGlobalEditMode();
-      }
-    } catch {
-      // ignore
-    }
-    mapStore.activeTool = null;
-    mapStore.globalEdit = false;
-    setMapInteractivity(true);
-  };
-  try {
-    document.addEventListener('keydown', onEscapeKey);
-  } catch {
-    // ignore
-  }
-  onBeforeUnmount(() => {
-    try {
-      document.removeEventListener('keydown', onEscapeKey);
-    } catch {
-      // ignore
-    }
-  });
+  // hide bubble on common map interactions
+  leafletMap.on('move', cancelDeleteBubble);
+  leafletMap.on('zoom', cancelDeleteBubble);
+  leafletMap.on('pm:drawstart', cancelDeleteBubble);
+  leafletMap.on('pm:create', cancelDeleteBubble);
 
   // Measurement wiring: call top-level helper functions that manage measurements
   const mapEvents = leafletMap as L.Map;
@@ -874,6 +1480,45 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     stopDrawMode();
     try {
       const layer = e.layer as unknown as PmLayer & DrawnLayer;
+
+      // Circles don't expose getLatLngs; handle them explicitly
+      if (layer && layer instanceof L.Circle) {
+        measurementMode.value = 'area';
+        try {
+          const r = (layer as L.Circle).getRadius();
+          const area = Math.PI * r * r;
+          measurementText.value = `${formatDistance(r)} • ${formatArea(area)}`;
+        } catch {
+          /* ignore */
+        }
+
+        const dl2 = layer as L.Circle & DrawnPmLayer;
+        dl2.drawnId = dl2.drawnId ?? generateDrawnId();
+        dl2.options = dl2.options || {};
+        (dl2.options as Record<string, unknown>).pmIgnore = false;
+        if (dl2.pm && typeof dl2.pm.enable === 'function') {
+          try {
+            dl2.pm.enable();
+          } catch {
+            /* ignore */
+          }
+        }
+        // attach right-click delete and hover measurement handlers for newly created circles
+        try {
+          attachContextDelete(layer);
+        } catch {}
+        try {
+          attachHoverListeners(layer);
+        } catch {}
+
+        setTimeout(() => (measurementText.value = ''), 3000);
+        persistAllDrawnLayers(leafletMap);
+
+        // done
+        setMapInteractivity(true);
+        return;
+      }
+
       if (layer && typeof layer.getLatLngs === 'function') {
         const ll = layer.getLatLngs() as unknown;
         const pts: L.LatLng[] = ([] as L.LatLng[]).concat(...(ll as unknown as L.LatLng[][]));
@@ -885,7 +1530,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
           measurementText.value = formatDistance(computeLengthLatLngs(pts));
         }
         setTimeout(() => (measurementText.value = ''), 3000);
-        const dl2 = layer as DrawnLayer & PMAttachable & { options?: Record<string, unknown> };
+        const dl2 = layer as DrawnPmLayer;
         dl2.drawnId = dl2.drawnId ?? generateDrawnId();
         dl2.options = dl2.options || {};
         (dl2.options as Record<string, unknown>).pmIgnore = false;
@@ -896,6 +1541,13 @@ const initMap = useDebounceFn(async (): Promise<void> => {
             /* ignore */
           }
         }
+        // attach right-click delete and hover measurement handlers for newly created layer
+        try {
+          attachContextDelete(layer);
+        } catch {}
+        try {
+          attachHoverListeners(layer);
+        } catch {}
         persistAllDrawnLayers(leafletMap);
       }
     } catch {
@@ -904,6 +1556,64 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     setMapInteractivity(true);
   });
   // persist after edits/removals are already wired later
+
+  // When a layer is cut (scissors), Geoman may produce new layers or sublayers.
+  // Ensure newly created pieces are user-managed: assign stable ids, re-enable PM,
+  // attach contextmenu delete and hover measurement handlers, and persist state.
+  mapEvents.on('pm:cut', (e: GeomanEvent) => {
+    try {
+      const maybe = e as unknown as { layer?: L.Layer; layers?: L.Layer[] };
+      function processLayer(l: L.Layer | null | undefined) {
+        if (!l) return;
+        try {
+          // mark as user-drawn, enable PM where available
+          const dp = l as DrawnPmLayer;
+          dp.drawnId = dp.drawnId ?? generateDrawnId();
+          dp.options = dp.options || {};
+          (dp.options as Record<string, unknown>).pmIgnore = false;
+          if (dp.pm && typeof dp.pm.enable === 'function') {
+            try {
+              dp.pm.enable();
+            } catch {
+              /* ignore */
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+        try {
+          attachContextDelete(l);
+        } catch {}
+        try {
+          attachHoverListeners(l);
+        } catch {}
+      }
+
+      if (maybe.layer) {
+        const l = maybe.layer;
+        if (
+          (l as LayerWithEach).eachLayer &&
+          typeof (l as LayerWithEach).eachLayer === 'function'
+        ) {
+          try {
+            (l as LayerWithEach).eachLayer!((sub: L.Layer) => processLayer(sub));
+          } catch {}
+        } else {
+          processLayer(l);
+        }
+      }
+
+      if (maybe.layers && Array.isArray(maybe.layers)) {
+        try {
+          (maybe.layers as L.Layer[]).forEach((ll) => processLayer(ll));
+        } catch {}
+      }
+
+      persistAllDrawnLayers(leafletMap);
+    } catch {
+      /* ignore */
+    }
+  });
   mapEvents.on('pm:editend', (e: GeomanEvent) => {
     const layer = e?.layer as unknown as PmLayer | undefined;
     if (layer) detachEditListeners(layer);
@@ -912,7 +1622,23 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     persistAllDrawnLayers(leafletMap);
     setMapInteractivity(true);
   });
-  leafletMap.on('pm:remove', () => persistAllDrawnLayers(leafletMap));
+  leafletMap.on('pm:remove', (e: { layer?: L.Layer }) => {
+    try {
+      if (e?.layer) {
+        try {
+          detachHoverListeners(e.layer);
+        } catch {}
+        try {
+          if (hoverActiveLayer === e.layer) {
+            hoverActiveLayer = null;
+            measurementText.value = '';
+            measurementMode.value = null;
+          }
+        } catch {}
+      }
+    } catch {}
+    persistAllDrawnLayers(leafletMap);
+  });
 
   // Marker clustering
   if (citiesWithCoords.value.length) {
@@ -999,12 +1725,50 @@ watch([citiesWithCoords, countriesWithCoords, regionsWithCoords], () => initMap(
   position: fixed;
   right: 12px;
   top: 12px;
-  background: rgba(0, 0, 0, 0.72);
+  background: rgba(0, 0, 0, 0.7);
   color: white;
-  padding: 8px 12px;
-  border-radius: 6px;
+  padding: 10px 14px;
+  border-radius: 8px;
   font-weight: 600;
   z-index: 2000;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  transform-origin: center top;
+}
+
+/* Transition: fade + subtle slide */
+.measurement-fade-enter-from,
+.measurement-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+}
+.measurement-fade-enter-active,
+.measurement-fade-leave-active {
+  transition:
+    opacity 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
+    transform 180ms cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+.measurement-fade-enter-to,
+.measurement-fade-leave-from {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+/* Content cross-fade / subtle scale on updates */
+.measurement-text-enter-from {
+  opacity: 0;
+  transform: scale(0.98) translateY(-2px);
+}
+.measurement-text-enter-active,
+.measurement-text-leave-active {
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+.measurement-text-leave-to {
+  opacity: 0;
+  transform: scale(0.98) translateY(-2px);
 }
 
 .leaflet-pm-toolbar {
@@ -1012,20 +1776,129 @@ watch([citiesWithCoords, countriesWithCoords, regionsWithCoords], () => initMap(
 }
 
 /* Explicitly hide rotate icon and rotate controls (best-effort) */
-.control-icon.leaflet-pm-icon-rotate,
-.leaflet-pm-icon-rotate {
+
+/* Also hide removal/eraser controls (Russian + English) as a best-effort fallback */
+.control-icon.leaflet-pm-icon-remove,
+.leaflet-pm-icon-remove,
+.leaflet-pm-icon-delete,
+.leaflet-pm-icon-trash {
   display: none !important;
   visibility: hidden !important;
   pointer-events: none !important;
 }
-.button-container[title*='Поворот'],
-.button-container[title*='поворот'] {
+.button-container[title*='Remove'],
+.button-container[title*='remove'],
+.button-container[title*='Delete'],
+.button-container[title*='delete'],
+.button-container[title*='Trash'],
+.button-container[title*='trash'] {
   display: none !important;
   visibility: hidden !important;
 }
-.leaflet-pm-action[title*='Поворот'],
-.leaflet-pm-action[title*='поворот'] {
+.leaflet-pm-action[title*='Remove'],
+.leaflet-pm-action[title*='remove'],
+.leaflet-pm-action[title*='Delete'],
+.leaflet-pm-action[title*='delete'],
+.leaflet-pm-action[title*='Trash'],
+.leaflet-pm-action[title*='trash'] {
   display: none !important;
   visibility: hidden !important;
+}
+
+/* Delete confirmation modal styles */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 3000;
+}
+.confirm-dialog {
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 20px 28px;
+  max-width: 420px;
+  width: 90%;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  text-align: center;
+}
+.confirm-icon {
+  font-size: 42px;
+  margin-bottom: 8px;
+}
+.confirm-title {
+  margin: 0 0 6px 0;
+  font-size: 18px;
+}
+.confirm-body {
+  margin: 0 0 18px 0;
+  color: #333;
+  opacity: 0.9;
+}
+.confirm-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+.btn {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+}
+.btn-delete {
+  background: #d93f3f;
+  color: white;
+}
+.btn-cancel {
+  background: #f0f0f0;
+  color: #222;
+}
+
+/* Inline delete bubble (visual: only the red circular button) */
+.delete-bubble {
+  position: fixed; /* fixed to viewport so it is above all elements */
+  /* centre the bubble on the click point */
+  transform: translate(-50%, -50%);
+  background: transparent; /* remove white background */
+  padding: 0;
+  box-shadow: none;
+  z-index: 99999; /* very high so it sits above everything */
+  pointer-events: none; /* avoid capturing clicks — let the inner button handle them */
+}
+.delete-bubble > .btn-bubble {
+  pointer-events: auto;
+}
+.btn-bubble {
+  background: #d93f3f;
+  color: #fff;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  border: none;
+  cursor: pointer;
+}
+.btn-bubble:active {
+  transform: scale(0.98);
+}
+
+/* fade animation for button (expand + fade only) */
+.delete-bubble .btn-bubble {
+  transition:
+    opacity 160ms cubic-bezier(0.2, 0.9, 0.2, 1),
+    transform 160ms cubic-bezier(0.2, 0.9, 0.2, 1);
+  transform-origin: center center;
+  transform: scale(1);
+}
+.delete-bubble.fading .btn-bubble {
+  opacity: 0;
+  transform: scale(1.6);
 }
 </style>
