@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { useStorage } from '@vueuse/core';
+import { ref } from 'vue';
 
 export const useMapStore = defineStore('map', () => {
   // persisted map view (lat, lng order)
@@ -17,5 +18,35 @@ export const useMapStore = defineStore('map', () => {
   const activeTool = useStorage<string | null>('map:activeTool', null);
   const globalEdit = useStorage<boolean>('map:globalEdit', false);
 
-  return { center, zoom, measurementMode, measurementText, drawn, activeTool, globalEdit };
+  // UI state (non-persistent): inline delete bubble state used by the map UI
+  const deleteBubble = ref<{
+    visible: boolean;
+    x: number;
+    y: number;
+    clientX?: number | null;
+    clientY?: number | null;
+    layer: unknown | null;
+    isGroup: boolean;
+    fading?: boolean;
+  }>({
+    visible: false,
+    x: 0,
+    y: 0,
+    clientX: null,
+    clientY: null,
+    layer: null,
+    isGroup: false,
+    fading: false,
+  });
+
+  return {
+    center,
+    zoom,
+    measurementMode,
+    measurementText,
+    drawn,
+    activeTool,
+    globalEdit,
+    deleteBubble,
+  };
 });
