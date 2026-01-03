@@ -40,7 +40,7 @@
 import MeasurementBadge from '@/components/MeasurementBadge.vue';
 import DeleteBubble from '@/components/DeleteBubble.vue';
 
-import { ref, computed, nextTick, watch } from 'vue';
+import { ref, computed, nextTick, watch, onBeforeUnmount } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
 import { trpc } from '@/trpc';
 import { useDebounceFn } from '@vueuse/core';
@@ -50,47 +50,36 @@ import { createMarkerIcon } from '@/lib/marker';
 import type { Country, Region, City } from '@gis/shared/schemas';
 import type { GeoPoint, GeoPolygon } from '@/types/geo.types';
 
-import {
-  computeLengthLatLngs,
-  computeAreaLatLngs,
-  formatDistance,
-  formatArea,
-} from '@/lib/measurements';
-import {
-  measurementMode,
-  measurementText,
-  onDrawVertex,
-  startDrawMode,
-  stopDrawMode,
-  attachEditListeners,
-  detachEditListeners,
-} from '@/composables/useMeasurements';
-
 import { getPolygonCoordsFromGeoJSON, getPointCoordsFromGeoJSON } from '@/composables/useGeo';
 import { useEscapeHandler } from '@/composables/useEscape';
-import { persistAllDrawnLayers } from '@/composables/usePersistDrawn';
-import { cancelDeleteBubble } from '@/composables/useDelete';
-
-import { detachHoverListeners, clearHoverState } from '@/composables/useHover';
+import { restoreDrawnFeatures } from '@/composables/usePersistDrawn';
 
 import { useDeleteConfirm } from '@/composables/useDeleteConfirm';
 import { disablePmOnAllLayers } from '@/composables/usePm';
-import { markLayerAsUser } from '@/composables/useLayerHelpers';
-import { setMapInteractivity } from '@/composables/useMapInteractivity';
+import { attachGeomanEvents } from '@/composables/useGeomanEvents';
 import { initGeomanToolbarCleanup } from '@/composables/useGeomanToolbar';
 
-import L, { Polyline, Polygon, LeafletEvent } from 'leaflet';
+import L from 'leaflet';
 import { LMap, LTileLayer, LPolygon } from '@vue-leaflet/vue-leaflet';
 import { isGeoman } from '@/lib/guards';
 import '@geoman-io/leaflet-geoman-free';
-import type { DrawnLayer, PmLayer, LayerWithEach, GeomanPM } from '@/types/leaflet.types';
 import 'leaflet.markercluster';
+import type { GeomanPM } from '@/types/leaflet.types';
 
 const mapStore = useMapStore();
 const mapRef = ref<InstanceType<typeof LMap> | null>(null);
-
 let markerClusterGroup: L.MarkerClusterGroup | null = null;
 const defaultMarkerIcon = createMarkerIcon('green', 'medium');
+
+/* Detach function returned by attachGeomanEvents (registered synchronously below) */
+let detachGeomanEvents: null | (() => void) = null;
+
+/* Register component lifecycle cleanup synchronously in setup (avoids calling lifecycle APIs after async awaits) */
+onBeforeUnmount(() => {
+  try {
+    if (typeof detachGeomanEvents === 'function') detachGeomanEvents();
+  } catch {}
+});
 
 /* Query preloaded geographic data (countries, regions, cities) */
 
@@ -191,71 +180,49 @@ const initMap = useDebounceFn(async (): Promise<void> => {
   const leafletMap = mapRef.value?.leafletObject as L.Map | undefined;
   if (!leafletMap) return;
 
+  try {
+    const mz = typeof leafletMap.getMaxZoom === 'function' ? leafletMap.getMaxZoom() : undefined;
+    if (!Number.isFinite(mz as number)) {
+      (leafletMap.options as L.MapOptions).maxZoom = 18;
+    }
+  } catch {}
+
   const pm = (leafletMap as L.Map & { pm?: GeomanPM }).pm;
 
-  // restore saved view if present
   if (mapStore.center && mapStore.zoom) {
     try {
       leafletMap.setView(mapStore.center as [number, number], mapStore.zoom);
     } catch {
-      /* ignore invalid stored view */
+      /* Ignore invalid stored view */
     }
   }
 
-  // draw persistence helpers moved to composable: usePersistDrawn
-  // use `generateDrawnId` and `persistAllDrawnLayers(map)` from '@/composables/usePersistDrawn'
+  /* Draw persistence helpers: use `generateDrawnId` and `persistAllDrawnLayers(map)` from '@/composables/usePersistDrawn' */
 
-  // Attach right-click-to-delete handler to a layer or its sublayers
+  /* Attach right-click-to-delete handler to a layer or its sublayers.
+     Use `useContextDelete.attachContextDelete` to register the handler. */
 
-  // Attach right-click-to-delete handler to a layer or its sublayers
-  // Context-delete behaviour moved to `useContextDelete.attachContextDelete` to keep App.vue focused on wiring.
+  /* Helper: mark a layer as user-drawn, enable PM, attach delete & hover handlers.
+     Use `useLayerHelpers.markLayerAsUser` to initialize layer behavior. */
 
-  // helper: mark a layer as user-drawn, enable PM, attach delete & hover handlers
-  // Layer helper moved to `useLayerHelpers.markLayerAsUser` to centralize layer initialization
+  /* Restore drawn features from persisted store */
 
-  // restore drawn features from store
-  if (mapStore.drawn?.features?.length) {
-    L.geoJSON(mapStore.drawn, {
-      onEachFeature(_feature, layer: L.Layer) {
-        try {
-          layer.addTo(leafletMap);
-          const idFromFeature = (_feature &&
-            (_feature.id ||
-              (_feature.properties && (_feature.properties as Record<string, unknown>).__id))) as
-            | string
-            | undefined;
-          if (
-            'eachLayer' in layer &&
-            typeof (layer as L.Layer & { eachLayer?: (fn: (l: L.Layer) => void) => void })
-              .eachLayer === 'function'
-          ) {
-            (layer as L.Layer & { eachLayer?: (fn: (l: L.Layer) => void) => void }).eachLayer!(
-              (sub: L.Layer) => {
-                markLayerAsUser(leafletMap, sub, idFromFeature);
-              },
-            );
-          } else {
-            markLayerAsUser(leafletMap, layer, idFromFeature);
-          }
-        } catch {
-          // ignore
-        }
-      },
-    }).addTo(leafletMap);
-  }
+  await restoreDrawnFeatures(leafletMap, mapStore.drawn ?? null);
 
-  // Prevent Geoman (PM) from interacting with preloaded layers (countries, regions, cities)
-  // run once to protect preloaded layers
+  /* Prevent Geoman (PM) from interacting with preloaded layers (countries, regions, cities) - run once to protect preloaded layers */
+
   disablePmOnAllLayers(leafletMap);
 
-  // persist view on move end
+  /* Persist view on move end */
+
   leafletMap.on('moveend', () => {
     const c = leafletMap.getCenter();
     mapStore.center = [c.lat, c.lng];
     mapStore.zoom = leafletMap.getZoom();
   });
 
-  // Geoman initialization
+  /* Geoman initialization */
+
   if (isGeoman(pm)) {
     if (typeof pm.setLang === 'function') pm.setLang('en');
     if (typeof pm.addControls === 'function')
@@ -271,242 +238,47 @@ const initMap = useDebounceFn(async (): Promise<void> => {
         removalMode: true,
       });
 
-    // Remove/hide rotate control — Geoman may add a rotate button in the actions container.
-    // We hide it with CSS (see style below) and also remove it from DOM after controls are created.
+    /* Remove/hide rotate control — Geoman may add a rotate button in the actions container.
+       We hide it with CSS (see style below) and also remove it from DOM after controls are created. */
     try {
       try {
         initGeomanToolbarCleanup();
       } catch {
-        /* ignore */
+        /* Ignore */
       }
     } catch {
-      // ignore failures — this is best-effort
+      /* Ignore failures — this is best-effort */
     }
   }
 
-  // Toggle map interactions to avoid input conflicts when Geoman tools are active
-  // Map interactivity helper moved to `useMapInteractivity.setMapInteractivity`
+  /* Consolidated Geoman event wiring: use `useGeomanEvents.attachGeomanEvents` */
 
-  // Geoman events: disable map interactions while drawing or editing
-  leafletMap.on('pm:drawstart', () => setMapInteractivity(leafletMap, false));
-  leafletMap.on('pm:drawend', () => setMapInteractivity(leafletMap, true));
-  leafletMap.on('pm:editstart', () => setMapInteractivity(leafletMap, false));
-  leafletMap.on('pm:editend', () => setMapInteractivity(leafletMap, true));
-  leafletMap.on('pm:globaleditmodetoggled', (e: { enabled?: boolean }) =>
-    setMapInteractivity(leafletMap, !Boolean(e?.enabled)),
-  );
-  leafletMap.on('pm:dragstart', () => setMapInteractivity(leafletMap, false));
-  leafletMap.on('pm:dragend', () => setMapInteractivity(leafletMap, true));
-
-  leafletMap.on('pm:create', (e: { layer: L.Layer; shape?: string }) => {
-    const layer = e.layer as DrawnLayer | Polyline | Polygon;
-    const getLatLngs = (layer as DrawnLayer).getLatLngs;
-    if (import.meta.env.DEV) {
-      console.debug(
-        'Создано:',
-        e.shape,
-        typeof getLatLngs === 'function' ? getLatLngs.call(layer) : undefined,
-      );
-    }
-    markLayerAsUser(leafletMap, layer);
-    persistAllDrawnLayers(leafletMap);
-  });
-
-  // Right-click cancels active Geoman tool (draw/edit) and re-enables map interactivity
-  leafletMap.on('contextmenu', () => {
+  try {
+    const detach = attachGeomanEvents(leafletMap);
     try {
-      if (isGeoman(pm)) {
-        try {
-          if (typeof pm.disableDraw === 'function') pm.disableDraw();
-        } catch {}
-        if (typeof pm.disableGlobalEditMode === 'function') {
-          try {
-            const anyPm = pm;
-            // Guard against broken Geoman internals that may not have set up handlers
-            if (
-              typeof anyPm._layerAddedEdit === 'function' &&
-              typeof anyPm.throttledReInitEdit === 'function'
-            ) {
-              try {
-                pm.disableGlobalEditMode();
-              } catch {
-                /* ignore geoman listener errors */
-              }
-            } else {
-              // Fallback: disable PM on all layers (safer than calling disableGlobalEditMode when internals are missing)
-              try {
-                disablePmOnAllLayers(leafletMap);
-              } catch {
-                /* ignore */
-              }
-            }
-          } catch {
-            /* ignore */
-          }
-        }
-      }
-    } catch {
-      // ignore
-    }
-    mapStore.activeTool = null;
-    mapStore.globalEdit = false;
-    setMapInteractivity(leafletMap, true);
-    // do not automatically cancel the delete bubble here — allow layer-level handlers to show it
-  });
-
-  // hide bubble on common map interactions
-  leafletMap.on('move', cancelDeleteBubble);
-  leafletMap.on('zoom', cancelDeleteBubble);
-  leafletMap.on('pm:drawstart', cancelDeleteBubble);
-  leafletMap.on('pm:create', cancelDeleteBubble);
-
-  // Measurement wiring: call top-level helper functions that manage measurements
-  const mapEvents = leafletMap as L.Map;
-  // typed Geoman event: layer is a Leaflet layer (possibly PM-attached)
-  type GeomanEvent = LeafletEvent & {
-    shape?: string;
-    layer?: L.Layer | undefined;
-    latlng?: L.LatLng;
-  };
-
-  // Attach measurement update listeners when edit starts
-  mapEvents.on('pm:editstart', (e: GeomanEvent) => {
-    const layer = e?.layer as PmLayer | undefined;
-    if (layer) attachEditListeners(layer);
-    setMapInteractivity(leafletMap, false);
-  });
-
-  mapEvents.on('pm:drawstart', (e: GeomanEvent) => {
-    const shape = (e?.shape as string) ?? '';
-    startDrawMode(leafletMap, shape);
-    setMapInteractivity(leafletMap, false);
-  });
-  mapEvents.on('pm:drawvertex', (e: GeomanEvent) => onDrawVertex(e));
-  mapEvents.on('pm:drawend', () => {
-    stopDrawMode(leafletMap);
-    setMapInteractivity(leafletMap, true);
-  });
-  mapEvents.on('pm:create', (e: GeomanEvent) => {
-    stopDrawMode(leafletMap);
-    try {
-      const layer = e.layer as PmLayer & DrawnLayer;
-
-      // Circles don't expose getLatLngs; handle them explicitly
-      if (layer && layer instanceof L.Circle) {
-        measurementMode.value = 'area';
-        try {
-          const r = (layer as L.Circle).getRadius();
-          const area = Math.PI * r * r;
-          measurementText.value = `${formatDistance(r)} • ${formatArea(area)}`;
-        } catch {
-          /* ignore */
-        }
-
-        markLayerAsUser(leafletMap, layer);
-
-        setTimeout(() => (measurementText.value = ''), 3000);
-        persistAllDrawnLayers(leafletMap);
-
-        // done
-        setMapInteractivity(leafletMap, true);
-        return;
-      }
-
-      if (layer && typeof layer.getLatLngs === 'function') {
-        const ll = layer.getLatLngs();
-        const nested = Array.isArray(ll) ? (ll as L.LatLng[][]) : ([] as L.LatLng[][]);
-        const pts: L.LatLng[] = ([] as L.LatLng[]).concat(...nested);
-        if (layer instanceof L.Polygon) {
-          measurementMode.value = 'area';
-          measurementText.value = formatArea(computeAreaLatLngs(pts));
-        } else if (layer instanceof L.Polyline) {
-          measurementMode.value = 'distance';
-          measurementText.value = formatDistance(computeLengthLatLngs(pts));
-        }
-        setTimeout(() => (measurementText.value = ''), 3000);
-        markLayerAsUser(leafletMap, layer);
-        persistAllDrawnLayers(leafletMap);
-      }
-    } catch {
-      // ignore
-    }
-    setMapInteractivity(leafletMap, true);
-  });
-  // persist after edits/removals are already wired later
-
-  // When a layer is cut (scissors), Geoman may produce new layers or sublayers.
-  // Ensure newly created pieces are user-managed: assign stable ids, re-enable PM,
-  // attach contextmenu delete and hover measurement handlers, and persist state.
-  mapEvents.on('pm:cut', (e: GeomanEvent) => {
-    try {
-      const maybe = e as { layer?: L.Layer; layers?: L.Layer[] };
-      function processLayer(l: L.Layer | null | undefined) {
-        if (!l) return;
-        markLayerAsUser(leafletMap, l);
-      }
-
-      if (maybe.layer) {
-        const l = maybe.layer;
-        if (
-          (l as LayerWithEach).eachLayer &&
-          typeof (l as LayerWithEach).eachLayer === 'function'
-        ) {
-          try {
-            (l as LayerWithEach).eachLayer!((sub: L.Layer) => processLayer(sub));
-          } catch {}
-        } else {
-          processLayer(l);
-        }
-      }
-
-      if (maybe.layers && Array.isArray(maybe.layers)) {
-        try {
-          (maybe.layers as L.Layer[]).forEach((ll) => processLayer(ll));
-        } catch {}
-      }
-
-      persistAllDrawnLayers(leafletMap);
-    } catch {
-      /* ignore */
-    }
-  });
-  mapEvents.on('pm:editend', (e: GeomanEvent) => {
-    const layer = e?.layer as PmLayer | undefined;
-    if (layer) detachEditListeners(layer);
-    measurementText.value = '';
-    // persist after edits
-    persistAllDrawnLayers(leafletMap);
-    setMapInteractivity(leafletMap, true);
-  });
-  leafletMap.on('pm:remove', (e: { layer?: L.Layer }) => {
-    try {
-      if (e?.layer) {
-        try {
-          detachHoverListeners(e.layer);
-        } catch {}
-        try {
-          clearHoverState();
-        } catch {}
-      }
+      detachGeomanEvents = typeof detach === 'function' ? detach : null;
     } catch {}
-    persistAllDrawnLayers(leafletMap);
-  });
+  } catch {
+    /* Ignore */
+  }
 
-  // Marker clustering (without ambient augmentation)
+  /* Marker clustering (without ambient augmentation) */
+
   if (citiesWithCoords.value && citiesWithCoords.value.length && mapRef.value) {
     const leafletMap = mapRef.value.leafletObject as L.Map;
 
-    // Remove old cluster group if present
+    /* Remove old cluster group if present */
     if (markerClusterGroup) {
       try {
         if (leafletMap) leafletMap.removeLayer(markerClusterGroup);
       } catch {
-        /* ignore */
+        /* Ignore */
       }
       markerClusterGroup = null;
     }
 
-    // Try to create a new cluster group using factory or constructor
+    /* Try to create a new cluster group using factory or constructor */
+
     let cluster: L.LayerGroup | null = null;
     const maybeFactory = (L as { markerClusterGroup?: () => L.LayerGroup }).markerClusterGroup;
     const maybeCtor = (L as { MarkerClusterGroup?: new () => L.LayerGroup }).MarkerClusterGroup;
@@ -521,7 +293,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
       markerClusterGroup = cluster as L.MarkerClusterGroup;
 
       for (const city of citiesWithCoords.value) {
-        // Explicitly type coords as [number, number]
+        /* Explicitly type coords as [number, number] */
         const marker = L.marker(city.coords as [number, number], {
           icon: defaultMarkerIcon,
         });
@@ -533,12 +305,15 @@ const initMap = useDebounceFn(async (): Promise<void> => {
         leafletMap.addLayer(markerClusterGroup);
       }
 
-      // ensure marker clusters and their markers are ignored by Geoman
+      /* Ensure marker clusters and their markers are ignored by Geoman */
       try {
         disablePmOnAllLayers(leafletMap);
       } catch {}
     }
   }
 }, 150);
+
+/* Initialize map on component mount and whenever preloaded data changes */
+
 watch([citiesWithCoords, countriesWithCoords, regionsWithCoords], () => initMap());
 </script>
