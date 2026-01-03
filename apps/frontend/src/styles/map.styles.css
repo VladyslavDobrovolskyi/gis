@@ -1,0 +1,220 @@
+/* App.vue extracted styles
+   Place any global overrides in this file. Import in main.ts or add to vite.config.js as needed. */
+
+.leaflet-pm-toolbar {
+  z-index: 1000 !important;
+}
+
+/* Increase Geoman toolbar and button sizes for better usability (very large) */
+.leaflet-pm-toolbar {
+  --pm-btn-size: 120px; /* button width/height */
+  --pm-icon-size: 72px; /* inner icon size */
+}
+/* Ultra-specific overrides to enforce size */
+.leaflet-pm-toolbar,
+.leaflet-pm-toolbar * {
+  z-index: 1100 !important;
+}
+.leaflet-pm-toolbar .leaflet-pm-button {
+  width: var(--pm-btn-size) !important;
+  height: var(--pm-btn-size) !important;
+  min-width: var(--pm-btn-size) !important;
+  min-height: var(--pm-btn-size) !important;
+  padding: 14px !important;
+  margin: 8px !important;
+  border-radius: 14px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.15) !important;
+  background: rgba(255, 255, 255, 0.98) !important;
+}
+.leaflet-pm-toolbar .leaflet-pm-button .leaflet-pm-icon,
+.leaflet-pm-toolbar .leaflet-pm-button svg,
+.leaflet-pm-toolbar .leaflet-pm-button svg * {
+  width: var(--pm-icon-size) !important;
+  height: var(--pm-icon-size) !important;
+}
+.leaflet-pm-toolbar .leaflet-pm-container {
+  gap: 12px !important;
+  padding: 8px !important;
+}
+@media (min-resolution: 2dppx) {
+  .leaflet-pm-toolbar {
+    --pm-btn-size: 150px;
+    --pm-icon-size: 96px;
+  }
+}
+@media (max-width: 480px) {
+  .leaflet-pm-toolbar {
+    --pm-btn-size: 80px;
+    --pm-icon-size: 48px;
+  }
+  .leaflet-pm-toolbar .leaflet-pm-container {
+    gap: 8px !important;
+  }
+}
+.measurement-badge {
+  position: fixed;
+  right: 12px;
+  top: 12px;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-weight: 600;
+  z-index: 2000;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  transform-origin: center top;
+}
+.measurement-fade-enter-from,
+.measurement-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+}
+.measurement-fade-enter-active,
+.measurement-fade-leave-active {
+  transition:
+    opacity 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
+    transform 180ms cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+.measurement-fade-enter-to,
+.measurement-fade-leave-from {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+.measurement-text-enter-from {
+  opacity: 0;
+  transform: scale(0.98) translateY(-2px);
+}
+.measurement-text-enter-active,
+.measurement-text-leave-active {
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+.measurement-text-leave-to {
+  opacity: 0;
+  transform: scale(0.98) translateY(-2px);
+}
+.leaflet-pm-toolbar {
+  z-index: 1000 !important;
+}
+.control-icon.leaflet-pm-icon-remove,
+.leaflet-pm-icon-remove,
+.leaflet-pm-icon-delete,
+.leaflet-pm-icon-trash {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+.button-container[title*='Remove'],
+.button-container[title*='remove'],
+.button-container[title*='Delete'],
+.button-container[title*='delete'],
+.button-container[title*='Trash'],
+.button-container[title*='trash'] {
+  display: none !important;
+  visibility: hidden !important;
+}
+.leaflet-pm-action[title*='Remove'],
+.leaflet-pm-action[title*='remove'],
+.leaflet-pm-action[title*='Delete'],
+.leaflet-pm-action[title*='delete'],
+.leaflet-pm-action[title*='Trash'],
+.leaflet-pm-action[title*='trash'] {
+  display: none !important;
+  visibility: hidden !important;
+}
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 3000;
+}
+.confirm-dialog {
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 20px 28px;
+  max-width: 420px;
+  width: 90%;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  text-align: center;
+}
+.confirm-icon {
+  font-size: 42px;
+  margin-bottom: 8px;
+}
+.confirm-title {
+  margin: 0 0 6px 0;
+  font-size: 18px;
+}
+.confirm-body {
+  margin: 0 0 18px 0;
+  color: #333;
+  opacity: 0.9;
+}
+.confirm-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+.btn {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+}
+.btn-delete {
+  background: #d93f3f;
+  color: white;
+}
+.btn-cancel {
+  background: #f0f0f0;
+  color: #222;
+}
+.delete-bubble {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+  z-index: 99999;
+  pointer-events: none;
+}
+.delete-bubble > .btn-bubble {
+  pointer-events: auto;
+}
+.btn-bubble {
+  background: #d93f3f;
+  color: #fff;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  border: none;
+  cursor: pointer;
+}
+.btn-bubble:active {
+  transform: scale(0.98);
+}
+.delete-bubble .btn-bubble {
+  transition:
+    opacity 160ms cubic-bezier(0.2, 0.9, 0.2, 1),
+    transform 160ms cubic-bezier(0.2, 0.9, 0.2, 1);
+  transform-origin: center center;
+  transform: scale(1);
+}
+.delete-bubble.fading .btn-bubble {
+  opacity: 0;
+  transform: scale(1.6);
+}
