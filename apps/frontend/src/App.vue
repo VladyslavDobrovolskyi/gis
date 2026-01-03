@@ -68,28 +68,22 @@ import {
 
 import { getPolygonCoordsFromGeoJSON, getPointCoordsFromGeoJSON } from '@/composables/useGeo';
 import { useEscapeHandler } from '@/composables/useEscape';
-import { generateDrawnId, persistAllDrawnLayers } from '@/composables/usePersistDrawn';
-import { cancelDeleteBubble, deleteLayerImmediate } from '@/composables/useDelete';
+import { persistAllDrawnLayers } from '@/composables/usePersistDrawn';
+import { cancelDeleteBubble } from '@/composables/useDelete';
 
-import {
-  attachHoverListeners,
-  detachHoverListeners,
-  clearHoverState,
-} from '@/composables/useHover';
+import { detachHoverListeners, clearHoverState } from '@/composables/useHover';
 
 import { useDeleteConfirm } from '@/composables/useDeleteConfirm';
+import { disablePmOnAllLayers } from '@/composables/usePm';
+import { markLayerAsUser } from '@/composables/useLayerHelpers';
+import { setMapInteractivity } from '@/composables/useMapInteractivity';
+import { initGeomanToolbarCleanup } from '@/composables/useGeomanToolbar';
 
 import L, { Polyline, Polygon, LeafletEvent } from 'leaflet';
 import { LMap, LTileLayer, LPolygon } from '@vue-leaflet/vue-leaflet';
 import { isGeoman } from '@/lib/guards';
 import '@geoman-io/leaflet-geoman-free';
-import type {
-  DrawnLayer,
-  DrawnPmLayer,
-  PmLayer,
-  LayerWithEach,
-  GeomanPM,
-} from '@/types/leaflet.types';
+import type { DrawnLayer, PmLayer, LayerWithEach, GeomanPM } from '@/types/leaflet.types';
 import 'leaflet.markercluster';
 
 const mapStore = useMapStore();
@@ -214,145 +208,10 @@ const initMap = useDebounceFn(async (): Promise<void> => {
   // Attach right-click-to-delete handler to a layer or its sublayers
 
   // Attach right-click-to-delete handler to a layer or its sublayers
-  function attachContextDelete(layer: L.Layer | null | undefined): void {
-    if (!layer) return;
-    const maybe = layer as L.Layer & {
-      on?: (evName: string, handler: (ev?: L.LeafletEvent) => void) => void;
-      off?: (evName: string, handler?: (ev?: L.LeafletEvent) => void) => void;
-      eachLayer?: (fn: (l: L.Layer) => void) => void;
-      options?: Record<string, unknown>;
-      // marker to avoid double-attaching
-      __contextDeleteAttached?: boolean;
-    };
-
-    if (maybe.__contextDeleteAttached) return;
-    maybe.__contextDeleteAttached = true;
-
-    const handler = (ev?: L.LeafletMouseEvent) => {
-      try {
-        // determine clicked layer (ev.target if available), otherwise fallback to maybe
-        const clickedLayer = ev?.target as L.Layer | undefined;
-        const targetLayer = clickedLayer ?? maybe;
-
-        // ensure we only delete user-created layers (they have drawnId)
-        const tl = targetLayer as LayerWithEach & DrawnLayer;
-        const isGroupLocal = typeof (tl as LayerWithEach).eachLayer === 'function';
-        const isUserLayer =
-          Boolean((tl as DrawnLayer).drawnId) ||
-          (isGroupLocal &&
-            (() => {
-              let found = false;
-              try {
-                (tl as LayerWithEach).eachLayer!((sub: L.Layer) => {
-                  if ((sub as DrawnLayer).drawnId) found = true;
-                });
-              } catch {
-                /* ignore */
-              }
-              return found;
-            })());
-        if (!isUserLayer) return;
-
-        // prevent default browser menu
-        ev?.originalEvent?.preventDefault?.();
-        ev?.originalEvent?.stopPropagation?.();
-
-        // debug: report that the contextmenu handler fired
-        try {
-          console.debug('attachContextDelete:contextmenu', {
-            isGroup: isGroupLocal,
-            layer: tl,
-            ev,
-          });
-        } catch {}
-
-        // immediate-delete on right-click, then show bubble as visual feedback
-        try {
-          deleteLayerImmediate(leafletMap, tl as L.Layer, isGroupLocal, ev);
-        } catch (err) {
-          console.warn('deleteLayerImmediate failed', err);
-        }
-      } catch (err) {
-        console.warn('attachContextDelete handler failed', err);
-      }
-    };
-
-    if (maybe.on) {
-      try {
-        maybe.on('contextmenu', handler);
-      } catch {
-        // ignore
-      }
-    }
-
-    // also attach to sublayers for groups
-    if (typeof maybe.eachLayer === 'function') {
-      try {
-        maybe.eachLayer!((sub: L.Layer) => {
-          const s = sub as L.Layer & {
-            __contextDeleteAttached?: boolean;
-            on?: (ev: string, handler: (ev?: L.LeafletEvent) => void) => void;
-          };
-          if (s.__contextDeleteAttached) return;
-          s.__contextDeleteAttached = true;
-          if (s.on) s.on('contextmenu', handler);
-        });
-      } catch {
-        /* ignore */
-      }
-    }
-  }
+  // Context-delete behaviour moved to `useContextDelete.attachContextDelete` to keep App.vue focused on wiring.
 
   // helper: mark a layer as user-drawn, enable PM, attach delete & hover handlers
-  function makeUserLayer(l: L.Layer | null | undefined, id?: string | undefined): void {
-    if (!l) return;
-    try {
-      const dl = l as DrawnPmLayer;
-      dl.drawnId = id ?? dl.drawnId ?? generateDrawnId();
-      dl.options = dl.options || {};
-      (dl.options as Record<string, unknown>).pmIgnore = false;
-      if (dl.pm && typeof dl.pm.enable === 'function') {
-        try {
-          dl.pm.enable();
-        } catch {
-          /* ignore */
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-    try {
-      attachContextDelete(l as L.Layer);
-    } catch {
-      /* ignore */
-    }
-    try {
-      attachHoverListeners(l as L.Layer);
-    } catch {
-      /* ignore */
-    }
-  }
-
-  // helper: set pm ignore and disable pm on a layer
-  function setPmIgnoreOnLayer(layer: L.Layer): void {
-    try {
-      const maybe = layer as L.Layer & {
-        options?: Record<string, unknown>;
-        pm?: { disable?: () => void } & Record<string, unknown>;
-      };
-      maybe.options = maybe.options || {};
-      (maybe.options as Record<string, unknown>).pmIgnore = true;
-      if (maybe.pm && typeof maybe.pm.disable === 'function') {
-        try {
-          maybe.pm.disable();
-        } catch {
-          /* ignore */
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-  }
+  // Layer helper moved to `useLayerHelpers.markLayerAsUser` to centralize layer initialization
 
   // restore drawn features from store
   if (mapStore.drawn?.features?.length) {
@@ -372,11 +231,11 @@ const initMap = useDebounceFn(async (): Promise<void> => {
           ) {
             (layer as L.Layer & { eachLayer?: (fn: (l: L.Layer) => void) => void }).eachLayer!(
               (sub: L.Layer) => {
-                makeUserLayer(sub, idFromFeature);
+                markLayerAsUser(leafletMap, sub, idFromFeature);
               },
             );
           } else {
-            makeUserLayer(layer, idFromFeature);
+            markLayerAsUser(leafletMap, layer, idFromFeature);
           }
         } catch {
           // ignore
@@ -386,27 +245,6 @@ const initMap = useDebounceFn(async (): Promise<void> => {
   }
 
   // Prevent Geoman (PM) from interacting with preloaded layers (countries, regions, cities)
-  function disablePmOnAllLayers(map: L.Map): void {
-    map.eachLayer((layer: L.Layer) => {
-      try {
-        if ((layer as DrawnLayer).drawnId) return;
-        try {
-          setPmIgnoreOnLayer(layer);
-          (layer as L.Layer & { eachLayer?: (fn: (l: L.Layer) => void) => void }).eachLayer?.(
-            (sub: L.Layer) => {
-              if ((sub as DrawnLayer).drawnId) return;
-              setPmIgnoreOnLayer(sub);
-            },
-          );
-        } catch {
-          /* ignore */
-        }
-      } catch {
-        // ignore per-layer errors
-      }
-    });
-  }
-
   // run once to protect preloaded layers
   disablePmOnAllLayers(leafletMap);
 
@@ -436,75 +274,10 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     // Remove/hide rotate control — Geoman may add a rotate button in the actions container.
     // We hide it with CSS (see style below) and also remove it from DOM after controls are created.
     try {
-      const removeRotateControls = () => {
-        const toolbar =
-          document.querySelector('.leaflet-pm-toolbar') ||
-          document.querySelector('.leaflet-buttons');
-        if (!toolbar) return;
-
-        // remove rotate icon elements and their containers
-        toolbar
-          .querySelectorAll('.leaflet-pm-icon-rotate, .control-icon.leaflet-pm-icon-rotate')
-          .forEach((el) => {
-            const container =
-              (el as HTMLElement).closest('.button-container') || (el as HTMLElement).parentElement;
-            if (container) container.remove();
-            else (el as HTMLElement).remove();
-          });
-
-        // Also remove eraser / removal controls (best-effort): look for common icon classes and titles
-        toolbar
-          .querySelectorAll(
-            '.leaflet-pm-icon-remove, .leaflet-pm-icon-delete, .leaflet-pm-icon-trash, .leaflet-pm-icon-removal, .control-icon.leaflet-pm-icon-remove',
-          )
-          .forEach((el) => {
-            const container =
-              (el as HTMLElement).closest('.button-container') || (el as HTMLElement).parentElement;
-            if (container) container.remove();
-            else (el as HTMLElement).remove();
-          });
-
-        // remove any button containers whose title contains rotate or delete keywords (case-insensitive)
-        toolbar.querySelectorAll('.button-container').forEach((el) => {
-          try {
-            const title = (el as HTMLElement).getAttribute('title') || '';
-            const t = title.toLowerCase();
-            if (
-              t.includes('поворот') ||
-              t.includes('удал') ||
-              t.includes('удалить') ||
-              t.includes('remove') ||
-              t.includes('delete') ||
-              t.includes('trash')
-            )
-              (el as HTMLElement).remove();
-          } catch {}
-        });
-
-        // remove individual actions with rotate/delete titles
-        toolbar.querySelectorAll('.leaflet-pm-action').forEach((el) => {
-          try {
-            const title = (el as HTMLElement).getAttribute('title') || '';
-            const t = title.toLowerCase();
-            if (
-              t.includes('поворот') ||
-              t.includes('удал') ||
-              t.includes('delete') ||
-              t.includes('remove') ||
-              t.includes('trash')
-            )
-              (el as HTMLElement).remove();
-          } catch {}
-        });
-      };
-      // call once after a short delay to let Geoman render its toolbar
-      setTimeout(removeRotateControls, 200);
-      // and observe toolbar for future changes
-      const toolbarNode =
-        document.querySelector('.leaflet-pm-toolbar') || document.querySelector('.leaflet-buttons');
-      if (toolbarNode && typeof MutationObserver !== 'undefined') {
-        const obs = new MutationObserver(removeRotateControls);
-        obs.observe(toolbarNode, { childList: true, subtree: true });
+      try {
+        initGeomanToolbarCleanup();
+      } catch {
+        /* ignore */
       }
     } catch {
       // ignore failures — this is best-effort
@@ -512,39 +285,18 @@ const initMap = useDebounceFn(async (): Promise<void> => {
   }
 
   // Toggle map interactions to avoid input conflicts when Geoman tools are active
-  function setMapInteractivity(enabled: boolean) {
-    const map = leafletMap;
-    if (!map) return;
-    try {
-      if (enabled) {
-        if (!map.dragging.enabled()) map.dragging.enable();
-        map.scrollWheelZoom.enable();
-        map.doubleClickZoom.enable();
-        if (map.boxZoom) map.boxZoom.enable();
-        if (map.keyboard) map.keyboard.enable();
-      } else {
-        if (map.dragging.enabled()) map.dragging.disable();
-        map.scrollWheelZoom.disable();
-        map.doubleClickZoom.disable();
-        if (map.boxZoom) map.boxZoom.disable();
-        if (map.keyboard) map.keyboard.disable();
-      }
-    } catch (err) {
-      // ignore: some builds may not expose every control
-      console.warn('setMapInteractivity failed', err);
-    }
-  }
+  // Map interactivity helper moved to `useMapInteractivity.setMapInteractivity`
 
   // Geoman events: disable map interactions while drawing or editing
-  leafletMap.on('pm:drawstart', () => setMapInteractivity(false));
-  leafletMap.on('pm:drawend', () => setMapInteractivity(true));
-  leafletMap.on('pm:editstart', () => setMapInteractivity(false));
-  leafletMap.on('pm:editend', () => setMapInteractivity(true));
+  leafletMap.on('pm:drawstart', () => setMapInteractivity(leafletMap, false));
+  leafletMap.on('pm:drawend', () => setMapInteractivity(leafletMap, true));
+  leafletMap.on('pm:editstart', () => setMapInteractivity(leafletMap, false));
+  leafletMap.on('pm:editend', () => setMapInteractivity(leafletMap, true));
   leafletMap.on('pm:globaleditmodetoggled', (e: { enabled?: boolean }) =>
-    setMapInteractivity(!Boolean(e?.enabled)),
+    setMapInteractivity(leafletMap, !Boolean(e?.enabled)),
   );
-  leafletMap.on('pm:dragstart', () => setMapInteractivity(false));
-  leafletMap.on('pm:dragend', () => setMapInteractivity(true));
+  leafletMap.on('pm:dragstart', () => setMapInteractivity(leafletMap, false));
+  leafletMap.on('pm:dragend', () => setMapInteractivity(leafletMap, true));
 
   leafletMap.on('pm:create', (e: { layer: L.Layer; shape?: string }) => {
     const layer = e.layer as DrawnLayer | Polyline | Polygon;
@@ -556,7 +308,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
         typeof getLatLngs === 'function' ? getLatLngs.call(layer) : undefined,
       );
     }
-    makeUserLayer(layer);
+    markLayerAsUser(leafletMap, layer);
     persistAllDrawnLayers(leafletMap);
   });
 
@@ -598,7 +350,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     }
     mapStore.activeTool = null;
     mapStore.globalEdit = false;
-    setMapInteractivity(true);
+    setMapInteractivity(leafletMap, true);
     // do not automatically cancel the delete bubble here — allow layer-level handlers to show it
   });
 
@@ -621,18 +373,18 @@ const initMap = useDebounceFn(async (): Promise<void> => {
   mapEvents.on('pm:editstart', (e: GeomanEvent) => {
     const layer = e?.layer as PmLayer | undefined;
     if (layer) attachEditListeners(layer);
-    setMapInteractivity(false);
+    setMapInteractivity(leafletMap, false);
   });
 
   mapEvents.on('pm:drawstart', (e: GeomanEvent) => {
     const shape = (e?.shape as string) ?? '';
     startDrawMode(leafletMap, shape);
-    setMapInteractivity(false);
+    setMapInteractivity(leafletMap, false);
   });
   mapEvents.on('pm:drawvertex', (e: GeomanEvent) => onDrawVertex(e));
   mapEvents.on('pm:drawend', () => {
     stopDrawMode(leafletMap);
-    setMapInteractivity(true);
+    setMapInteractivity(leafletMap, true);
   });
   mapEvents.on('pm:create', (e: GeomanEvent) => {
     stopDrawMode(leafletMap);
@@ -650,13 +402,13 @@ const initMap = useDebounceFn(async (): Promise<void> => {
           /* ignore */
         }
 
-        makeUserLayer(layer);
+        markLayerAsUser(leafletMap, layer);
 
         setTimeout(() => (measurementText.value = ''), 3000);
         persistAllDrawnLayers(leafletMap);
 
         // done
-        setMapInteractivity(true);
+        setMapInteractivity(leafletMap, true);
         return;
       }
 
@@ -672,13 +424,13 @@ const initMap = useDebounceFn(async (): Promise<void> => {
           measurementText.value = formatDistance(computeLengthLatLngs(pts));
         }
         setTimeout(() => (measurementText.value = ''), 3000);
-        makeUserLayer(layer);
+        markLayerAsUser(leafletMap, layer);
         persistAllDrawnLayers(leafletMap);
       }
     } catch {
       // ignore
     }
-    setMapInteractivity(true);
+    setMapInteractivity(leafletMap, true);
   });
   // persist after edits/removals are already wired later
 
@@ -690,7 +442,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
       const maybe = e as { layer?: L.Layer; layers?: L.Layer[] };
       function processLayer(l: L.Layer | null | undefined) {
         if (!l) return;
-        makeUserLayer(l);
+        markLayerAsUser(leafletMap, l);
       }
 
       if (maybe.layer) {
@@ -724,7 +476,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     measurementText.value = '';
     // persist after edits
     persistAllDrawnLayers(leafletMap);
-    setMapInteractivity(true);
+    setMapInteractivity(leafletMap, true);
   });
   leafletMap.on('pm:remove', (e: { layer?: L.Layer }) => {
     try {
