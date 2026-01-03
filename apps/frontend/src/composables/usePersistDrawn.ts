@@ -1,4 +1,4 @@
-import type L from 'leaflet';
+import L from 'leaflet';
 import type { DrawnLayer } from '@/types/leaflet.types';
 import { useMapStore } from '@/stores/map.store';
 
@@ -66,4 +66,68 @@ export function persistAllDrawnLayers(map: L.Map): void {
   }
   const ms = getMapStore();
   if (ms) ms.drawn = fc;
+}
+
+export async function restoreDrawnFeatures(map: L.Map, fc?: GeoJSON.FeatureCollection | null) {
+  try {
+    const fromArg = fc ?? null;
+    const ms = getMapStore();
+    let data: GeoJSON.FeatureCollection | null = fromArg ?? (ms && ms.drawn ? ms.drawn : null);
+    if (!data) {
+      try {
+        const raw = localStorage.getItem('map:drawn');
+        if (raw) data = JSON.parse(raw) as GeoJSON.FeatureCollection;
+      } catch {
+        // ignore
+      }
+    }
+    if (!data || !data.features || !Array.isArray(data.features) || data.features.length === 0)
+      return;
+
+    // dynamic imports to avoid circular deps and keep module boundaries small
+    const layerHelpers = await import('./useLayerHelpers');
+
+    L.geoJSON(data, {
+      onEachFeature(_feature, layer: L.Layer) {
+        try {
+          layer.addTo(map);
+          const idFromFeature = (_feature &&
+            (_feature.id ||
+              (_feature.properties && (_feature.properties as Record<string, unknown>).__id))) as
+            | string
+            | undefined;
+
+          if (
+            'eachLayer' in layer &&
+            typeof (layer as L.Layer & { eachLayer?: (fn: (l: L.Layer) => void) => void })
+              .eachLayer === 'function'
+          ) {
+            try {
+              (layer as L.Layer & { eachLayer?: (fn: (l: L.Layer) => void) => void }).eachLayer!(
+                (sub: L.Layer) => {
+                  try {
+                    layerHelpers.markLayerAsUser(map, sub, idFromFeature as string | undefined);
+                  } catch {
+                    /* ignore */
+                  }
+                },
+              );
+            } catch {
+              /* ignore */
+            }
+          } else {
+            try {
+              layerHelpers.markLayerAsUser(map, layer, idFromFeature as string | undefined);
+            } catch {
+              /* ignore */
+            }
+          }
+        } catch {
+          // ignore
+        }
+      },
+    }).addTo(map);
+  } catch {
+    /* ignore */
+  }
 }
