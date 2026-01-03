@@ -31,26 +31,8 @@
       color="blue"
       :fill-opacity="0.25"
     />
-    <Transition name="measurement-fade">
-      <div v-if="measurementText" class="measurement-badge" role="status" aria-live="polite">
-        <Transition name="measurement-text" mode="out-in">
-          <span :key="measurementText">{{ measurementText }}</span>
-        </Transition>
-      </div>
-    </Transition>
-
-    <!-- Small inline delete bubble (appears over a drawn element) -->
-    <div
-      v-if="deleteBubble.visible"
-      class="delete-bubble"
-      :class="{ fading: deleteBubble.fading }"
-      :style="{ left: (deleteBubble.clientX ?? 0) + 'px', top: (deleteBubble.clientY ?? 0) + 'px' }"
-      @click.stop
-      role="dialog"
-      aria-label="Удалить объект"
-    >
-      <div class="btn-bubble" role="img" aria-hidden="true">✖</div>
-    </div>
+    <MeasurementBadge />
+    <DeleteBubble />
   </l-map>
 </template>
 
@@ -62,8 +44,33 @@ import type { City } from '@gis/shared/schemas';
 import L, { Polyline, Polygon, LeafletEvent } from 'leaflet';
 import { useQuery } from '@tanstack/vue-query';
 import { useDebounceFn } from '@vueuse/core';
-import { length as turfLength, area as turfArea, lineString, polygon } from '@turf/turf';
-import { useMapStore } from './stores/map';
+import { useMapStore } from '@/stores/map.store';
+import {
+  computeLengthLatLngs,
+  computeAreaLatLngs,
+  formatDistance,
+  formatArea,
+} from '@/lib/measurements';
+import { createMarkerIcon } from '@/lib/marker';
+import MeasurementBadge from '@/components/MeasurementBadge.vue';
+import DeleteBubble from '@/components/DeleteBubble.vue';
+
+import {
+  measurementMode,
+  measurementText,
+  onDrawVertex,
+  startDrawMode,
+  stopDrawMode,
+  attachEditListeners,
+  detachEditListeners,
+} from '@/composables/useMeasurements';
+import {
+  attachHoverListeners,
+  detachHoverListeners,
+  clearHoverState,
+} from '@/composables/useHover';
+import { cancelDeleteBubble, deleteLayerImmediate } from '@/composables/useDelete';
+import { generateDrawnId, persistAllDrawnLayers } from '@/composables/usePersistDrawn';
 
 /* -------------------- Leaflet плагины -------------------- */
 
@@ -74,112 +81,31 @@ import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import '@geoman-io/leaflet-geoman-free';
 import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css';
 
-/* -------------------- Types -------------------- */
+import type { GeoPoint, GeoPolygon } from '@/types/geo.types';
+import type { Country, Region } from '@gis/shared/schemas';
+import { getPolygonCoordsFromGeoJSON, getPointCoordsFromGeoJSON } from '@/composables/useGeo';
+import type {
+  DrawnLayer,
+  DrawnPmLayer,
+  PmLayer,
+  LayerWithEach,
+  GeomanPM,
+  PMAttachable,
+} from '@/types/leaflet.types';
+import { isGeoman } from '@/types/leaflet.types';
 
-type GeoPoint = {
-  type: 'Point';
-  coordinates: [number, number];
-};
-
-type GeoPolygon =
-  | {
-      type: 'Polygon';
-      coordinates: [number, number][][];
-    }
-  | {
-      type: 'MultiPolygon';
-      coordinates: [number, number][][][];
-    };
-
-interface Country {
-  ogc_fid: number;
-  name: string;
-  iso_code: string;
-  geom: string | null;
-}
-
-interface Region {
-  ogc_fid: number;
-  name: string;
-  iso_code: string;
-  geom: string | null;
-}
-
-// minimal typing to avoid `any`
-interface MarkerClusterGroupLike extends L.Layer {
-  addLayer(layer: L.Layer): void;
-  removeLayer(layer: L.Layer): void;
-}
-interface DrawnLayer extends L.Layer {
-  // stable id assigned to user-created / restored layers
-  drawnId?: string;
-  getLatLngs?: () => unknown;
-}
-
-// typed wrapper for PM-enabled layers to avoid using `any`
-interface PMAttachable {
-  pm?: {
-    enable?: () => void;
-    disable?: () => void;
-  };
-}
-
-// Combined typed alias for layers that are drawn and PM-attachable with optional options
-type DrawnPmLayer = DrawnLayer & PMAttachable & { options?: Record<string, unknown> };
-
-interface GeomanPM {
-  setLang?(lang: string): void;
-  addControls?(opts: {
-    position?: string;
-    drawMarker?: boolean;
-    drawCircleMarker?: boolean;
-    drawPolyline?: boolean;
-    drawPolygon?: boolean;
-    drawRectangle?: boolean;
-    editMode?: boolean;
-    dragMode?: boolean;
-    removalMode?: boolean;
-  }): void;
-  disableDraw?(): void;
-  disableGlobalEditMode?(): void;
-}
-
-// Type guard for Geoman
-function isGeoman(pm: unknown): pm is GeomanPM {
-  return (
-    !!pm &&
-    typeof pm === 'object' &&
-    ('setLang' in pm || 'addControls' in pm || 'disableDraw' in pm)
-  );
-}
-
-// Factory for markerClusterGroup
-function createMarkerClusterGroup(): MarkerClusterGroupLike | null {
-  const maybeFactory = (L as unknown as Record<string, unknown>)['markerClusterGroup'];
-  if (typeof maybeFactory === 'function') {
-    return (maybeFactory as () => MarkerClusterGroupLike)();
-  }
-  const maybeCtor = (L as unknown as Record<string, unknown>)['MarkerClusterGroup'];
-  if (typeof maybeCtor === 'function') {
-    return new (maybeCtor as new () => MarkerClusterGroupLike)();
-  }
-  return null;
-}
+// MarkerCluster usage: rely on ambient augmentation and check runtime availability instead of a separate factory helper
 
 /* -------------------- Constants -------------------- */
 
-const greenIcon = new L.Icon({
-  iconUrl:
-    'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41],
-});
+// Use a reusable marker icon factory (color + size options)
+const defaultMarkerIcon = createMarkerIcon('green', 'medium');
 
 const mapRef = ref<InstanceType<typeof LMap> | null>(null);
-let markerClusterGroup: MarkerClusterGroupLike | null = null;
+let markerClusterGroup: L.MarkerClusterGroup | null = null;
+
+// Pinia map store
+const mapStore = useMapStore();
 
 /* -------------------- Queries -------------------- */
 
@@ -221,24 +147,7 @@ const regions = computed(() =>
   })),
 );
 
-/* -------------------- Geo helpers (FIX) -------------------- */
-
-/**
- * Всегда возвращает массив рингов:
- * [ [ [lat, lng], ... ] ]
- */
-function getPolygonCoordsFromGeoJSON(geo: GeoPolygon | null): [number, number][][] {
-  if (!geo) return [];
-
-  const rings = geo.type === 'Polygon' ? geo.coordinates : geo.coordinates.flat();
-
-  return rings.map((ring) => ring.map(([lng, lat]) => [lat, lng]));
-}
-
-function getPointCoordsFromGeoJSON(geo: GeoPoint | null): [number, number] | null {
-  if (!geo) return null;
-  return [geo.coordinates[1], geo.coordinates[0]];
-}
+/* -------------------- Geo helpers (moved to composable) -------------------- */
 
 /* -------------------- Computed -------------------- */
 
@@ -285,187 +194,47 @@ const citiesWithPolygonCoords = computed(() =>
     .filter((city) => city.geometry.length > 0),
 );
 
-/* -------------------- Measurement helpers -------------------- */
-
-let currentDrawPoints: L.LatLng[] = [];
-const measurementMode = ref<'distance' | 'area' | null>(null);
-const measurementText = ref<string>('');
-// Pinia store persisted in localStorage via VueUse
-const mapStore = useMapStore();
-
-// initialize local measurement refs from store (if present)
-if (mapStore.measurementMode) measurementMode.value = mapStore.measurementMode;
-// Do NOT restore a previous measurement text on startup — avoid showing stale measurements.
-// We'll clear it explicitly after the map initializes so measurements appear only during
-// active drawing or hover interactions.
-measurementText.value = '';
-mapStore.measurementText = '';
-
-// keep store in sync with reactive refs
-watch(measurementMode, (v) => (mapStore.measurementMode = v));
-watch(measurementText, (v) => (mapStore.measurementText = v));
-
-type PmLayer = L.Layer & {
-  getLatLngs?: () => unknown;
-  on?: (evt: string, fn: (...args: unknown[]) => void) => void;
-  off?: (evt: string, fn?: (...args: unknown[]) => void) => void;
-};
-
-function formatDistance(m: number): string {
-  if (m >= 1000) return `${(m / 1000).toFixed(2)} km`;
-  return `${Math.round(m)} m`;
-}
-function formatArea(m2: number): string {
-  if (m2 >= 1_000_000) return `${(m2 / 1_000_000).toFixed(2)} km²`;
-  return `${Math.round(m2)} m²`;
-}
-
-function computeLengthLatLngs(points: L.LatLng[]): number {
-  if (points.length < 2) return 0;
-  // turf expects [lng, lat]
-  const coords = points.map((p) => [p.lng, p.lat] as [number, number]);
-  const line = lineString(coords);
-  // ask turf for meters directly
-  return turfLength(line, { units: 'meters' }) as number;
-}
-
-function computeAreaLatLngs(points: L.LatLng[]): number {
-  if (points.length < 3) return 0;
-  // turf expects [lng, lat] and a closed linear ring
-  const coords = points.map((p) => [p.lng, p.lat] as [number, number]);
-  if (
-    coords.length &&
-    (coords[0][0] !== coords[coords.length - 1][0] || coords[0][1] !== coords[coords.length - 1][1])
-  ) {
-    coords.push(coords[0]);
-  }
-  const poly = polygon([coords]);
-  // turf.area returns square meters
-  return turfArea(poly) as number;
-}
-
-function updateMeasurementFromPoints(points: L.LatLng[]) {
-  if (!measurementMode.value) return;
-  if (measurementMode.value === 'distance') {
-    const length = computeLengthLatLngs(points);
-    measurementText.value = formatDistance(length);
-  } else if (measurementMode.value === 'area') {
-    const area = computeAreaLatLngs(points);
-    measurementText.value = formatArea(area);
-  }
-}
-
-function onDrawVertex(e: { latlng?: L.LatLng }): void {
-  if (!e || !e.latlng) return;
-  currentDrawPoints.push(e.latlng);
-  updateMeasurementFromPoints(currentDrawPoints);
-}
-
-function onMouseMoveDuringDraw(e: L.LeafletMouseEvent): void {
-  if (!currentDrawPoints.length) return;
-  const preview = [...currentDrawPoints, e.latlng];
-  updateMeasurementFromPoints(preview);
-}
-
-function startDrawMode(shape: string): void {
-  currentDrawPoints = [];
-  const s = (shape || '').toLowerCase();
-  if (s.includes('line') || s.includes('polyline')) {
-    measurementMode.value = 'distance';
-  } else if (s.includes('polygon') || s.includes('rectangle') || s.includes('circle')) {
-    measurementMode.value = 'area';
-  } else {
-    measurementMode.value = null;
-  }
-  if (measurementMode.value === 'distance') {
-    measurementText.value = formatDistance(0);
-  } else if (measurementMode.value === 'area') {
-    measurementText.value = formatArea(0);
-  } else {
-    measurementText.value = '';
-  }
-  const map = mapRef.value?.leafletObject as L.Map | undefined;
-  if (!measurementMode.value || !map) return;
-  map.on('pm:drawvertex', onDrawVertex as (ev: unknown) => void);
-  map.on('mousemove', onMouseMoveDuringDraw as (ev: L.LeafletMouseEvent) => void);
-}
-
-function stopDrawMode(): void {
-  const map = mapRef.value?.leafletObject as L.Map | undefined;
-  if (map) {
-    map.off('pm:drawvertex', onDrawVertex as (ev: unknown) => void);
-    map.off('mousemove', onMouseMoveDuringDraw as (ev: L.LeafletMouseEvent) => void);
-  }
-  measurementMode.value = null;
-  currentDrawPoints = [];
-  setTimeout(() => (measurementText.value = ''), 3000);
-}
-
-function attachEditListeners(layer: PmLayer): void {
-  // support polygons, polylines and circles
-  if (layer instanceof L.Circle) {
-    measurementMode.value = 'area';
-  } else {
-    measurementMode.value =
-      layer instanceof L.Polygon ? 'area' : layer instanceof L.Polyline ? 'distance' : null;
-  }
-  if (!measurementMode.value) return;
-
-  const update = (): void => {
-    try {
-      if (layer instanceof L.Circle) {
-        const r = (layer as L.Circle).getRadius(); // meters
-        const area = Math.PI * r * r;
-        measurementText.value = `${formatDistance(r)} • ${formatArea(area)}`;
-        return;
-      }
-      if (typeof layer.getLatLngs === 'function') {
-        const ll = layer.getLatLngs() as unknown;
-        const pts: L.LatLng[] = ([] as L.LatLng[]).concat(...(ll as unknown as L.LatLng[][]));
-        updateMeasurementFromPoints(pts);
-      }
-    } catch {
-      /* ignore */
-    }
-  };
-
-  if (layer.on) layer.on('pm:edit', update);
-  if (layer.on) layer.on('pm:dragend', update);
-  if (layer.on) layer.on('pm:update', update);
-  update();
-}
-
-// Hover listeners: show measurement badge when cursor is over a drawn layer
-// track last mouse position to avoid clearing on hover between layers (e.g., marker overlays)
-let lastMouseX = 0;
-let lastMouseY = 0;
-function mouseMoveHandler(e: MouseEvent) {
-  lastMouseX = e.clientX;
-  lastMouseY = e.clientY;
-}
-try {
-  document.addEventListener('mousemove', mouseMoveHandler);
-} catch {
-  // ignore
-}
-// register global key & mouse listeners during setup
-try {
-  document.addEventListener('mousemove', mouseMoveHandler);
-} catch {
-  /* ignore */
-}
+/* -------------------- Hover helpers (moved to composable) -------------------- */
 
 const onEscapeKey = (e: KeyboardEvent) => {
   if (e.key !== 'Escape') return;
   try {
     const leafletMap = mapRef.value?.leafletObject as L.Map | undefined;
-    const pmLocal = (leafletMap as unknown as { pm?: unknown })?.pm;
+    const pmLocal = (leafletMap as L.Map & { pm?: GeomanPM })?.pm;
     if (isGeoman(pmLocal)) {
       try {
         if (typeof pmLocal.disableDraw === 'function') pmLocal.disableDraw();
       } catch {}
       try {
-        if (typeof pmLocal.disableGlobalEditMode === 'function') pmLocal.disableGlobalEditMode();
+        if (typeof pmLocal.disableGlobalEditMode === 'function') {
+          try {
+            const anyPm = pmLocal;
+            if (
+              typeof anyPm._layerAddedEdit === 'function' &&
+              typeof anyPm.throttledReInitEdit === 'function'
+            ) {
+              try {
+                pmLocal.disableGlobalEditMode();
+              } catch {}
+            } else {
+              const mapL = mapRef.value?.leafletObject as L.Map | undefined;
+              if (mapL) {
+                try {
+                  mapL.eachLayer((layer: L.Layer & PMAttachable) => {
+                    try {
+                      const lpm = layer.pm;
+                      if (lpm && typeof lpm.disable === 'function') {
+                        try {
+                          lpm.disable();
+                        } catch {}
+                      }
+                    } catch {}
+                  });
+                } catch {}
+              }
+            }
+          } catch {}
+        }
       } catch {}
     }
     if (leafletMap) {
@@ -497,503 +266,52 @@ try {
 }
 
 // remove on unmount
-onBeforeUnmount(() => {
+const onDeleteConfirm = (e: Event) => {
   try {
-    document.removeEventListener('mousemove', mouseMoveHandler);
+    const detail = (e as CustomEvent)?.detail as { layer?: L.Layer } | undefined;
+    const layer = detail?.layer as L.Layer | undefined;
+    const leafletMap = mapRef.value?.leafletObject as L.Map | undefined;
+    if (layer && leafletMap) {
+      try {
+        deleteLayerImmediate(leafletMap, layer);
+      } catch {
+        /* ignore */
+      }
+    }
+    cancelDeleteBubble();
   } catch {}
+};
+try {
+  window.addEventListener('map:delete-confirm', onDeleteConfirm);
+} catch {}
+onBeforeUnmount(() => {
   try {
     document.removeEventListener('keydown', onEscapeKey);
   } catch {}
+  try {
+    window.removeEventListener('map:delete-confirm', onDeleteConfirm);
+  } catch {}
 });
 
-// Debounce/ownership to handle fast mouse transitions between layers
-let hoverClearTimer: number | null = null;
-let hoverActiveLayer: L.Layer | null = null;
+// Hover and edit listener helpers moved to composables:
+// - '@/composables/useHover' provides attachHoverListeners/detachHoverListeners
+// - '@/composables/useMeasurements' provides attachEditListeners/detachEditListeners
 
-const hoverAttached = new WeakMap<
-  L.Layer,
-  { onOver?: (e: L.LeafletMouseEvent) => void; onOut?: (e: L.LeafletMouseEvent) => void }
->();
-
-function attachHoverListeners(layer: L.Layer | null | undefined): void {
-  if (!layer) return;
-  const maybe = layer as L.Layer & {
-    __hoverAttached?: boolean;
-    eachLayer?: (fn: (l: L.Layer) => void) => void;
-  };
-  if (maybe.__hoverAttached) return;
-  maybe.__hoverAttached = true;
-
-  const owner = maybe;
-  const onOver = (e?: L.LeafletMouseEvent) => {
-    try {
-      // cancel any pending clear and mark this layer as active
-      if (hoverClearTimer) {
-        window.clearTimeout(hoverClearTimer);
-        hoverClearTimer = null;
-      }
-      hoverActiveLayer = owner;
-
-      const target = (e && (e.target as L.Layer)) ?? maybe;
-      const l = target as PmLayer & DrawnLayer;
-      if (!l) return;
-
-      // Circles don't provide getLatLngs — handle them first
-      if (l instanceof L.Circle) {
-        measurementMode.value = 'area';
-        const r = (l as L.Circle).getRadius();
-        const area = Math.PI * r * r;
-        measurementText.value = `${formatDistance(r)} • ${formatArea(area)}`;
-        return;
-      }
-
-      if (typeof l.getLatLngs !== 'function') return;
-      const ll = l.getLatLngs() as unknown;
-      const pts: L.LatLng[] = ([] as L.LatLng[]).concat(...(ll as unknown as L.LatLng[][]));
-      if (l instanceof L.Polygon) {
-        measurementMode.value = 'area';
-        measurementText.value = formatArea(computeAreaLatLngs(pts));
-      } else if (l instanceof L.Polyline) {
-        measurementMode.value = 'distance';
-        measurementText.value = formatDistance(computeLengthLatLngs(pts));
-      }
-    } catch {
-      /* ignore */
-    }
-  };
-  const onOut = () => {
-    // schedule a clear; cancelable if another layer's onOver fires
-    if (hoverClearTimer) window.clearTimeout(hoverClearTimer);
-    const ownerLayer = maybe;
-    hoverClearTimer = window.setTimeout(() => {
-      try {
-        // if hover moved to another attached layer, don't clear
-        if (hoverActiveLayer && hoverActiveLayer !== ownerLayer) return;
-
-        const el = document.elementFromPoint(lastMouseX, lastMouseY) as HTMLElement | null;
-        if (el) {
-          let cur: HTMLElement | null = el;
-          while (cur) {
-            const cls = (cur.className || '') as string;
-            if (
-              cls.includes &&
-              (cls.includes('leaflet-marker-icon') || cls.includes('leaflet-interactive'))
-            ) {
-              // still over a leaflet vector or marker — keep measurement
-              return;
-            }
-            cur = cur.parentElement;
-          }
-        }
-      } catch {
-        // ignore and clear
-      }
-      // proceed to clear
-      hoverActiveLayer = null;
-      measurementText.value = '';
-      measurementMode.value = null;
-      hoverClearTimer = null;
-    }, 160);
-  };
-
-  // attach to this layer
-  try {
-    const pmLayer = maybe as PmLayer;
-    if (pmLayer.on) pmLayer.on('mouseover', onOver as (ev?: L.LeafletMouseEvent) => void);
-    if (pmLayer.on) pmLayer.on('mouseout', onOut as (ev?: L.LeafletMouseEvent) => void);
-  } catch {
-    // ignore
-  }
-
-  // also attach to sublayers if present
-  if (typeof maybe.eachLayer === 'function') {
-    try {
-      maybe.eachLayer!((sub) => {
-        try {
-          const s = sub as L.Layer & { __hoverAttached?: boolean } & PmLayer;
-          if (s.__hoverAttached) return;
-          s.__hoverAttached = true;
-          if (s.on) s.on('mouseover', onOver as (ev?: L.LeafletMouseEvent) => void);
-          if (s.on) s.on('mouseout', onOut as (ev?: L.LeafletMouseEvent) => void);
-        } catch {
-          /* ignore */
-        }
-      });
-    } catch {
-      /* ignore */
-    }
-  }
-  hoverAttached.set(maybe, { onOver, onOut });
-}
-
-function detachHoverListeners(layer: L.Layer | null | undefined): void {
-  if (!layer) return;
-  const maybe = layer as L.Layer & {
-    __hoverAttached?: boolean;
-    eachLayer?: (fn: (l: L.Layer) => void) => void;
-  } & PmLayer;
-  const h = hoverAttached.get(maybe);
-  if (h && maybe.off) {
-    try {
-      if (h.onOver && maybe.off)
-        maybe.off('mouseover', h.onOver as (ev?: L.LeafletMouseEvent) => void);
-      if (h.onOut && maybe.off)
-        maybe.off('mouseout', h.onOut as (ev?: L.LeafletMouseEvent) => void);
-    } catch {
-      /* ignore */
-    }
-  }
-  hoverAttached.delete(maybe);
-  maybe.__hoverAttached = false;
-  // if this layer was the active hover, clear the ownership and any pending timer
-  try {
-    if (hoverActiveLayer === maybe) hoverActiveLayer = null;
-    if (hoverClearTimer) {
-      window.clearTimeout(hoverClearTimer);
-      hoverClearTimer = null;
-    }
-  } catch {}
-  if (typeof maybe.eachLayer === 'function') {
-    try {
-      maybe.eachLayer!((sub) => {
-        try {
-          (sub as L.Layer & { __hoverAttached?: boolean }).__hoverAttached = false;
-        } catch {}
-      });
-    } catch {}
-  }
-}
-function detachEditListeners(layer: PmLayer) {
-  if (!layer) return;
-  if (layer.off) layer.off('pm:edit');
-  if (layer.off) layer.off('pm:dragend');
-  if (layer.off) layer.off('pm:update');
-  measurementText.value = '';
-}
-
-// typed helper for layers that expose `eachLayer`
-interface LayerWithEach {
-  eachLayer?: (fn: (l: L.Layer) => void) => void;
-}
-
-// Delete bubble state (appears over a drawn element) ✅
-const deleteBubble = ref<{
-  visible: boolean;
-  x: number;
-  y: number;
-  clientX?: number | null;
-  clientY?: number | null;
-  layer: L.Layer | null;
-  isGroup: boolean;
-  fading?: boolean;
-}>({
-  visible: false,
-  x: 0,
-  y: 0,
-  clientX: null,
-  clientY: null,
-  layer: null,
-  isGroup: false,
-  fading: false,
-});
-
-let bubbleClickAwayHandler: ((e: MouseEvent) => void) | null = null;
-let bubbleEscHandler: ((e: KeyboardEvent) => void) | null = null;
-let bubbleAutoHideTimer: number | null = null;
-let bubbleHideAfterFadeTimer: number | null = null;
-
-function showDeleteBubble(
-  target: L.Layer | null,
-  isGroup = false,
-  ev?: L.LeafletMouseEvent,
-  autoFadeMs = 3000,
-): void {
-  const map = mapRef.value?.leafletObject as L.Map | undefined;
-  let point: L.Point | null = null;
-  if (ev && 'containerPoint' in ev && ev.containerPoint) {
-    point = ev.containerPoint;
-  } else if (ev && ev.latlng && map) {
-    point = map.latLngToContainerPoint(ev.latlng);
-  } else if (
-    map &&
-    target &&
-    (target as LayerWithEach & { getBounds?: () => L.LatLngBounds })?.getBounds &&
-    typeof (target as LayerWithEach & { getBounds?: () => L.LatLngBounds }).getBounds === 'function'
-  ) {
-    try {
-      const lw = target as LayerWithEach & { getBounds?: () => L.LatLngBounds };
-      const center = lw.getBounds!().getCenter();
-      point = map.latLngToContainerPoint(center);
-    } catch {
-      /* ignore */
-    }
-  }
-
-  // fallback: use clientX/clientY relative to map container when available
-  if (!point && ev && ev.originalEvent && (ev.originalEvent as MouseEvent).clientX !== undefined) {
-    try {
-      const me = ev.originalEvent as MouseEvent;
-      const container =
-        (map && map.getContainer && (map.getContainer() as HTMLElement)) ||
-        (document.querySelector('.leaflet-container') as HTMLElement | null);
-      if (container) {
-        const rect = container.getBoundingClientRect();
-        const px = Math.round(me.clientX - rect.left);
-        const py = Math.round(me.clientY - rect.top);
-        point = L.point(px, py);
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
-  // clear existing timers and reset fading
-  if (bubbleAutoHideTimer) {
-    window.clearTimeout(bubbleAutoHideTimer);
-    bubbleAutoHideTimer = null;
-  }
-  if (bubbleHideAfterFadeTimer) {
-    window.clearTimeout(bubbleHideAfterFadeTimer);
-    bubbleHideAfterFadeTimer = null;
-  }
-
-  deleteBubble.value.layer = target;
-  deleteBubble.value.isGroup = isGroup;
-  deleteBubble.value.fading = false;
-  // compute client coordinates for fixed positioning — prefer mouse clientX/clientY (works for clicks on text/SVG)
-  const margin = 8;
-  if (ev && ev.originalEvent && (ev.originalEvent as MouseEvent).clientX !== undefined) {
-    try {
-      const me = ev.originalEvent as MouseEvent;
-      deleteBubble.value.clientX = Math.round(me.clientX);
-      deleteBubble.value.clientY = Math.round(me.clientY);
-    } catch {
-      /* ignore */
-    }
-  }
-
-  // If we still don't have client coords, try using the map container rect + point
-  if ((deleteBubble.value.clientX == null || deleteBubble.value.clientY == null) && point && map) {
-    try {
-      const rect = (
-        map.getContainer && (map.getContainer() as HTMLElement)
-      )?.getBoundingClientRect();
-      if (rect) {
-        deleteBubble.value.clientX = Math.round(rect.left + point.x);
-        deleteBubble.value.clientY = Math.round(rect.top + point.y);
-      } else {
-        deleteBubble.value.clientX = Math.round(point.x);
-        deleteBubble.value.clientY = Math.round(point.y);
-      }
-    } catch {
-      if (point) {
-        deleteBubble.value.clientX = Math.round(point.x);
-        deleteBubble.value.clientY = Math.round(point.y);
-      }
-    }
-  }
-
-  // Final fallback: use last known x/y
-  if (deleteBubble.value.clientX == null || deleteBubble.value.clientY == null) {
-    deleteBubble.value.clientX = Math.round(deleteBubble.value.x || 0);
-    deleteBubble.value.clientY = Math.round(deleteBubble.value.y || 0);
-  }
-
-  // Clamp to viewport so it doesn't appear off-screen or stuck at left
-  try {
-    const vw = window.innerWidth || document.documentElement.clientWidth;
-    const vh = window.innerHeight || document.documentElement.clientHeight;
-    deleteBubble.value.clientX = Math.min(
-      Math.max(margin, deleteBubble.value.clientX),
-      vw - margin,
-    );
-    deleteBubble.value.clientY = Math.min(
-      Math.max(margin, deleteBubble.value.clientY),
-      vh - margin,
-    );
-  } catch {
-    /* ignore */
-  }
-
-  // keep legacy x/y for any internal use, but UI uses client coords
-  deleteBubble.value.x = Math.max(8, Math.round(point ? point.x : 0));
-  deleteBubble.value.y = Math.max(8, Math.round(point ? point.y : 0));
-  deleteBubble.value.visible = true;
-  try {
-    console.debug('showDeleteBubble', {
-      x: deleteBubble.value.x,
-      y: deleteBubble.value.y,
-      isGroup,
-      target,
-      autoFadeMs,
-    });
-  } catch {}
-  try {
-    bubbleClickAwayHandler = (e: MouseEvent) => {
-      // click outside bubble closes it
-      const el = document.querySelector('.delete-bubble');
-      if (el && e.target && el.contains(e.target as Node)) return;
-      cancelDeleteBubble();
-    };
-    bubbleEscHandler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') cancelDeleteBubble();
-    };
-    document.addEventListener('click', bubbleClickAwayHandler);
-    document.addEventListener('keydown', bubbleEscHandler);
-  } catch {
-    /* ignore */
-  }
-
-  // auto-fade after a short timeout (visual only, doesn't delete)
-  try {
-    bubbleAutoHideTimer = window.setTimeout(() => {
-      deleteBubble.value.fading = true;
-      // hide after the fade animation completes (match the CSS transition)
-      bubbleHideAfterFadeTimer = window.setTimeout(() => cancelDeleteBubble(), 220);
-      bubbleAutoHideTimer = null;
-    }, autoFadeMs);
-  } catch {}
-}
-
-function cancelDeleteBubble(): void {
-  deleteBubble.value.visible = false;
-  deleteBubble.value.layer = null;
-  deleteBubble.value.isGroup = false;
-  try {
-    if (bubbleClickAwayHandler) document.removeEventListener('click', bubbleClickAwayHandler);
-    if (bubbleEscHandler) document.removeEventListener('keydown', bubbleEscHandler);
-  } catch {
-    /* ignore */
-  }
-  bubbleClickAwayHandler = null;
-  bubbleEscHandler = null;
-}
-
-// delete immediately and show visual feedback bubble
-function deleteLayerImmediate(target: L.Layer, isGroup = false, ev?: L.LeafletMouseEvent): void {
-  const map = mapRef.value?.leafletObject as L.Map | undefined;
-  if (!map || !target) return;
-
-  // show bubble immediately as visual feedback (fade quickly)
-  showDeleteBubble(target, isGroup, ev, 180);
-
-  try {
-    // detach hover listeners before removal
-    try {
-      detachHoverListeners(target as L.Layer);
-    } catch {}
-
-    if (isGroup && typeof (target as LayerWithEach).eachLayer === 'function') {
-      try {
-        (target as LayerWithEach).eachLayer!((sub: L.Layer) => {
-          try {
-            // detach hover listeners for sublayers
-            try {
-              detachHoverListeners(sub);
-            } catch {}
-            if (map.hasLayer(sub)) map.removeLayer(sub);
-          } catch {
-            /* ignore */
-          }
-        });
-      } catch {
-        /* ignore */
-      }
-    } else {
-      try {
-        const t = target as L.Layer;
-        try {
-          detachHoverListeners(t);
-        } catch {}
-        if (map.hasLayer(t)) map.removeLayer(t);
-      } catch {
-        /* ignore */
-      }
-    }
-
-    // clear any hover/measurement state immediately
-    try {
-      if (hoverClearTimer) {
-        window.clearTimeout(hoverClearTimer);
-        hoverClearTimer = null;
-      }
-      hoverActiveLayer = null;
-      measurementText.value = '';
-      measurementMode.value = null;
-    } catch {}
-
-    persistAllDrawnLayers(map);
-  } catch {
-    /* ignore */
-  }
-}
+// Delete bubble UI moved to composable: '@/composables/useDeleteBubble'
+// delete behavior moved to composable: useDeleteBubble.deleteLayerImmediate(map, target, ...)
+// see: '@/composables/useDeleteBubble'
 
 /* -------------------- Map init -------------------- */
 
-// small helper to generate stable unique ids for drawn features
-function generateDrawnId(): string {
-  const g = globalThis as unknown as { crypto?: { randomUUID?: () => string } };
-  if (g && g.crypto && typeof g.crypto.randomUUID === 'function') {
-    try {
-      return g.crypto.randomUUID!();
-    } catch {
-      // fallback
-    }
-  }
-  return `${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffff).toString(36)}`;
-}
-
-// collect and persist GeoJSON features currently on the map
-function persistAllDrawnLayers(map: L.Map): void {
-  const features: GeoJSON.Feature[] = [];
-  map.eachLayer((layer: L.Layer) => {
-    try {
-      // Persist layers that are not explicitly ignored by Geoman (pmIgnore)
-      const maybeDrawn = layer as DrawnLayer;
-      const opts = (layer as unknown as { options?: Record<string, unknown> }).options || {};
-      const pmIgnored = Boolean(opts.pmIgnore);
-      if (
-        !pmIgnored &&
-        typeof (layer as L.Layer & { toGeoJSON?: unknown }).toGeoJSON === 'function'
-      ) {
-        const geo = (layer as L.Layer & { toGeoJSON: () => GeoJSON.Feature }).toGeoJSON();
-        if (
-          geo &&
-          (geo.geometry?.type === 'Polygon' ||
-            geo.geometry?.type === 'MultiPolygon' ||
-            geo.geometry?.type === 'LineString' ||
-            geo.geometry?.type === 'MultiLineString')
-        ) {
-          // ensure feature id and a stable property
-          const id = (maybeDrawn.drawnId ||= generateDrawnId());
-          if (!geo.id) geo.id = id;
-          if (!geo.properties) geo.properties = {} as Record<string, unknown>;
-          (geo.properties as Record<string, unknown>).__id = id;
-          features.push(geo);
-        }
-      }
-    } catch {
-      // ignore layers that fail conversion
-    }
-  });
-  // ensure plain-serializable object and write directly to localStorage
-  const fc = JSON.parse(
-    JSON.stringify({ type: 'FeatureCollection', features }),
-  ) as GeoJSON.FeatureCollection;
-  try {
-    localStorage.setItem('map:drawn', JSON.stringify(fc));
-  } catch {
-    // ignore localStorage errors (e.g., quota)
-  }
-  mapStore.drawn = fc;
-}
+// draw persistence helpers have been moved to `composables/usePersistDrawn`
+// using: `generateDrawnId` and `persistAllDrawnLayers(map)`
 
 const initMap = useDebounceFn(async (): Promise<void> => {
   await nextTick();
   const leafletMap = mapRef.value?.leafletObject as L.Map | undefined;
   if (!leafletMap) return;
 
-  const pm = (leafletMap as unknown as { pm?: unknown }).pm;
+  const pm = (leafletMap as L.Map & { pm?: GeomanPM }).pm;
 
   // restore saved view if present
   if (mapStore.center && mapStore.zoom) {
@@ -1004,63 +322,8 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     }
   }
 
-  // small helper to generate stable unique ids for drawn features
-  function generateDrawnId(): string {
-    const g = globalThis as unknown as { crypto?: { randomUUID?: () => string } };
-    if (g && g.crypto && typeof g.crypto.randomUUID === 'function') {
-      try {
-        return g.crypto.randomUUID!();
-      } catch {
-        // fallback
-      }
-    }
-    return `${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffff).toString(36)}`;
-  }
-
-  // collect and persist GeoJSON features currently on the map
-  function persistAllDrawnLayers(map: L.Map): void {
-    const features: GeoJSON.Feature[] = [];
-    map.eachLayer((layer: L.Layer) => {
-      try {
-        // Persist layers that are not explicitly ignored by Geoman (pmIgnore)
-        const maybeDrawn = layer as DrawnLayer;
-        const opts = (layer as unknown as { options?: Record<string, unknown> }).options || {};
-        const pmIgnored = Boolean(opts.pmIgnore);
-        if (
-          !pmIgnored &&
-          typeof (layer as L.Layer & { toGeoJSON?: unknown }).toGeoJSON === 'function'
-        ) {
-          const geo = (layer as L.Layer & { toGeoJSON: () => GeoJSON.Feature }).toGeoJSON();
-          if (
-            geo &&
-            (geo.geometry?.type === 'Polygon' ||
-              geo.geometry?.type === 'MultiPolygon' ||
-              geo.geometry?.type === 'LineString' ||
-              geo.geometry?.type === 'MultiLineString')
-          ) {
-            // ensure feature id and a stable property
-            const id = (maybeDrawn.drawnId ||= generateDrawnId());
-            if (!geo.id) geo.id = id;
-            if (!geo.properties) geo.properties = {} as Record<string, unknown>;
-            (geo.properties as Record<string, unknown>).__id = id;
-            features.push(geo);
-          }
-        }
-      } catch {
-        // ignore layers that fail conversion
-      }
-    });
-    // ensure plain-serializable object and write directly to localStorage
-    const fc = JSON.parse(
-      JSON.stringify({ type: 'FeatureCollection', features }),
-    ) as GeoJSON.FeatureCollection;
-    try {
-      localStorage.setItem('map:drawn', JSON.stringify(fc));
-    } catch {
-      // ignore localStorage errors (e.g., quota)
-    }
-    mapStore.drawn = fc;
-  }
+  // draw persistence helpers moved to composable: usePersistDrawn
+  // use `generateDrawnId` and `persistAllDrawnLayers(map)` from '@/composables/usePersistDrawn'
 
   // Attach right-click-to-delete handler to a layer or its sublayers
 
@@ -1119,7 +382,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
 
         // immediate-delete on right-click, then show bubble as visual feedback
         try {
-          deleteLayerImmediate(tl as L.Layer, isGroupLocal, ev);
+          deleteLayerImmediate(leafletMap, tl as L.Layer, isGroupLocal, ev);
         } catch (err) {
           console.warn('deleteLayerImmediate failed', err);
         }
@@ -1190,8 +453,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
               },
             );
           } else {
-            const drawnLayer = layer as DrawnLayer &
-              PMAttachable & { options?: Record<string, unknown> };
+            const drawnLayer = layer as DrawnPmLayer;
             drawnLayer.drawnId = idFromFeature ?? drawnLayer.drawnId ?? generateDrawnId();
             drawnLayer.options = drawnLayer.options || {};
             (drawnLayer.options as Record<string, unknown>).pmIgnore = false;
@@ -1214,18 +476,19 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     }).addTo(leafletMap);
   }
 
-  // Prevent Geoman from interacting with preloaded layers (countries, regions, cities)
-  function disableGeomanOnPreloadedLayers(map: L.Map): void {
+  // Prevent Geoman (PM) from interacting with preloaded layers (countries, regions, cities)
+  function disablePmOnAllLayers(map: L.Map): void {
     map.eachLayer((layer: L.Layer) => {
       try {
         // skip user-drawn layers (they have `drawnId` set)
         if ((layer as DrawnLayer).drawnId) return;
 
-        const maybe = layer as unknown as {
+        type LayerWithPm = L.Layer & {
           options?: Record<string, unknown>;
           pm?: { disable?: () => void } & Record<string, unknown>;
           eachLayer?: (fn: (l: L.Layer) => void) => void;
         };
+        const maybe = layer as LayerWithPm;
 
         maybe.options = maybe.options || {};
         (maybe.options as Record<string, unknown>).pmIgnore = true;
@@ -1242,10 +505,11 @@ const initMap = useDebounceFn(async (): Promise<void> => {
           try {
             maybe.eachLayer!((sub: L.Layer) => {
               if ((sub as DrawnLayer).drawnId) return;
-              const ms = sub as unknown as {
+              type SubWithPm = L.Layer & {
                 options?: Record<string, unknown>;
                 pm?: { disable?: () => void };
               };
+              const ms = sub as SubWithPm;
               ms.options = ms.options || {};
               (ms.options as Record<string, unknown>).pmIgnore = true;
               if (ms.pm && typeof ms.pm.disable === 'function') {
@@ -1267,7 +531,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
   }
 
   // run once to protect preloaded layers
-  disableGeomanOnPreloadedLayers(leafletMap);
+  disablePmOnAllLayers(leafletMap);
 
   // persist view on move end
   leafletMap.on('moveend', () => {
@@ -1427,9 +691,9 @@ const initMap = useDebounceFn(async (): Promise<void> => {
       }
     }
     // attach right-click-to-delete handler
-    attachContextDelete(layer);
+    attachContextDelete(layer as L.Layer);
     // attach hover listeners to show measurements
-    attachHoverListeners(layer);
+    attachHoverListeners(layer as L.Layer);
     persistAllDrawnLayers(leafletMap);
   });
 
@@ -1437,8 +701,34 @@ const initMap = useDebounceFn(async (): Promise<void> => {
   leafletMap.on('contextmenu', () => {
     try {
       if (isGeoman(pm)) {
-        if (typeof pm.disableDraw === 'function') pm.disableDraw();
-        if (typeof pm.disableGlobalEditMode === 'function') pm.disableGlobalEditMode();
+        try {
+          if (typeof pm.disableDraw === 'function') pm.disableDraw();
+        } catch {}
+        if (typeof pm.disableGlobalEditMode === 'function') {
+          try {
+            const anyPm = pm;
+            // Guard against broken Geoman internals that may not have set up handlers
+            if (
+              typeof anyPm._layerAddedEdit === 'function' &&
+              typeof anyPm.throttledReInitEdit === 'function'
+            ) {
+              try {
+                pm.disableGlobalEditMode();
+              } catch {
+                /* ignore geoman listener errors */
+              }
+            } else {
+              // Fallback: disable PM on all layers (safer than calling disableGlobalEditMode when internals are missing)
+              try {
+                disablePmOnAllLayers(leafletMap);
+              } catch {
+                /* ignore */
+              }
+            }
+          } catch {
+            /* ignore */
+          }
+        }
       }
     } catch {
       // ignore
@@ -1457,29 +747,34 @@ const initMap = useDebounceFn(async (): Promise<void> => {
 
   // Measurement wiring: call top-level helper functions that manage measurements
   const mapEvents = leafletMap as L.Map;
-  type GeomanEvent = LeafletEvent & { shape?: string; layer?: unknown; latlng?: L.LatLng };
+  // typed Geoman event: layer is a Leaflet layer (possibly PM-attached)
+  type GeomanEvent = LeafletEvent & {
+    shape?: string;
+    layer?: L.Layer | undefined;
+    latlng?: L.LatLng;
+  };
 
   // Attach measurement update listeners when edit starts
   mapEvents.on('pm:editstart', (e: GeomanEvent) => {
-    const layer = e?.layer as unknown as PmLayer | undefined;
+    const layer = e?.layer as PmLayer | undefined;
     if (layer) attachEditListeners(layer);
     setMapInteractivity(false);
   });
 
   mapEvents.on('pm:drawstart', (e: GeomanEvent) => {
     const shape = (e?.shape as string) ?? '';
-    startDrawMode(shape);
+    startDrawMode(leafletMap, shape);
     setMapInteractivity(false);
   });
   mapEvents.on('pm:drawvertex', (e: GeomanEvent) => onDrawVertex(e));
   mapEvents.on('pm:drawend', () => {
-    stopDrawMode();
+    stopDrawMode(leafletMap);
     setMapInteractivity(true);
   });
   mapEvents.on('pm:create', (e: GeomanEvent) => {
-    stopDrawMode();
+    stopDrawMode(leafletMap);
     try {
-      const layer = e.layer as unknown as PmLayer & DrawnLayer;
+      const layer = e.layer as PmLayer & DrawnLayer;
 
       // Circles don't expose getLatLngs; handle them explicitly
       if (layer && layer instanceof L.Circle) {
@@ -1520,8 +815,9 @@ const initMap = useDebounceFn(async (): Promise<void> => {
       }
 
       if (layer && typeof layer.getLatLngs === 'function') {
-        const ll = layer.getLatLngs() as unknown;
-        const pts: L.LatLng[] = ([] as L.LatLng[]).concat(...(ll as unknown as L.LatLng[][]));
+        const ll = layer.getLatLngs();
+        const nested = Array.isArray(ll) ? (ll as L.LatLng[][]) : ([] as L.LatLng[][]);
+        const pts: L.LatLng[] = ([] as L.LatLng[]).concat(...nested);
         if (layer instanceof L.Polygon) {
           measurementMode.value = 'area';
           measurementText.value = formatArea(computeAreaLatLngs(pts));
@@ -1562,7 +858,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
   // attach contextmenu delete and hover measurement handlers, and persist state.
   mapEvents.on('pm:cut', (e: GeomanEvent) => {
     try {
-      const maybe = e as unknown as { layer?: L.Layer; layers?: L.Layer[] };
+      const maybe = e as { layer?: L.Layer; layers?: L.Layer[] };
       function processLayer(l: L.Layer | null | undefined) {
         if (!l) return;
         try {
@@ -1615,7 +911,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     }
   });
   mapEvents.on('pm:editend', (e: GeomanEvent) => {
-    const layer = e?.layer as unknown as PmLayer | undefined;
+    const layer = e?.layer as PmLayer | undefined;
     if (layer) detachEditListeners(layer);
     measurementText.value = '';
     // persist after edits
@@ -1629,35 +925,57 @@ const initMap = useDebounceFn(async (): Promise<void> => {
           detachHoverListeners(e.layer);
         } catch {}
         try {
-          if (hoverActiveLayer === e.layer) {
-            hoverActiveLayer = null;
-            measurementText.value = '';
-            measurementMode.value = null;
-          }
+          clearHoverState();
         } catch {}
       }
     } catch {}
     persistAllDrawnLayers(leafletMap);
   });
 
-  // Marker clustering
-  if (citiesWithCoords.value.length) {
+  // Marker clustering (without ambient augmentation)
+  if (citiesWithCoords.value && citiesWithCoords.value.length && mapRef.value) {
+    const leafletMap = mapRef.value.leafletObject as L.Map;
+
+    // Remove old cluster group if present
     if (markerClusterGroup) {
-      leafletMap.removeLayer(markerClusterGroup);
+      try {
+        if (leafletMap) leafletMap.removeLayer(markerClusterGroup);
+      } catch {
+        /* ignore */
+      }
       markerClusterGroup = null;
     }
-    const created = createMarkerClusterGroup();
-    if (created) {
-      markerClusterGroup = created;
-      citiesWithCoords.value.forEach((city) => {
-        const marker = L.marker(city.coords, { icon: greenIcon });
+
+    // Try to create a new cluster group using factory or constructor
+    let cluster: L.LayerGroup | null = null;
+    const maybeFactory = (L as { markerClusterGroup?: () => L.LayerGroup }).markerClusterGroup;
+    const maybeCtor = (L as { MarkerClusterGroup?: new () => L.LayerGroup }).MarkerClusterGroup;
+
+    if (typeof maybeFactory === 'function') {
+      cluster = maybeFactory();
+    } else if (typeof maybeCtor === 'function') {
+      cluster = new maybeCtor();
+    }
+
+    if (cluster) {
+      markerClusterGroup = cluster as L.MarkerClusterGroup;
+
+      for (const city of citiesWithCoords.value) {
+        // Explicitly type coords as [number, number]
+        const marker = L.marker(city.coords as [number, number], {
+          icon: defaultMarkerIcon,
+        });
         marker.bindPopup(`<strong>${city.city_name}</strong>`);
-        markerClusterGroup!.addLayer(marker);
-      });
-      leafletMap.addLayer(markerClusterGroup);
+        markerClusterGroup.addLayer(marker);
+      }
+
+      if (leafletMap) {
+        leafletMap.addLayer(markerClusterGroup);
+      }
+
       // ensure marker clusters and their markers are ignored by Geoman
       try {
-        disableGeomanOnPreloadedLayers(leafletMap);
+        disablePmOnAllLayers(leafletMap);
       } catch {}
     }
   }
