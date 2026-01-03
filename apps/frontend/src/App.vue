@@ -2,7 +2,7 @@
   <l-map ref="mapRef" :zoom="6" :center="[50.45, 30.52]" style="height: 100vh; width: 100%">
     <l-tile-layer
       url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-      attribution="© OpenStreetMap contributors"
+      attribution=" © OpenStreetMap Contribution  |  Created by Vladyslav Dobrovolskyi"
     />
 
     <!-- Countries -->
@@ -37,24 +37,25 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, watch, onBeforeUnmount } from 'vue';
-import { LMap, LTileLayer, LPolygon } from '@vue-leaflet/vue-leaflet';
-import { trpc } from './trpc';
-import type { City } from '@gis/shared/schemas';
-import L, { Polyline, Polygon, LeafletEvent } from 'leaflet';
+import MeasurementBadge from '@/components/MeasurementBadge.vue';
+import DeleteBubble from '@/components/DeleteBubble.vue';
+
+import { ref, computed, nextTick, watch } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
+import { trpc } from '@/trpc';
 import { useDebounceFn } from '@vueuse/core';
 import { useMapStore } from '@/stores/map.store';
+import { createMarkerIcon } from '@/lib/marker';
+
+import type { Country, Region, City } from '@gis/shared/schemas';
+import type { GeoPoint, GeoPolygon } from '@/types/geo.types';
+
 import {
   computeLengthLatLngs,
   computeAreaLatLngs,
   formatDistance,
   formatArea,
 } from '@/lib/measurements';
-import { createMarkerIcon } from '@/lib/marker';
-import MeasurementBadge from '@/components/MeasurementBadge.vue';
-import DeleteBubble from '@/components/DeleteBubble.vue';
-
 import {
   measurementMode,
   measurementText,
@@ -64,50 +65,40 @@ import {
   attachEditListeners,
   detachEditListeners,
 } from '@/composables/useMeasurements';
+
+import { getPolygonCoordsFromGeoJSON, getPointCoordsFromGeoJSON } from '@/composables/useGeo';
+import { useEscapeHandler } from '@/composables/useEscape';
+import { generateDrawnId, persistAllDrawnLayers } from '@/composables/usePersistDrawn';
+import { cancelDeleteBubble, deleteLayerImmediate } from '@/composables/useDelete';
+
 import {
   attachHoverListeners,
   detachHoverListeners,
   clearHoverState,
 } from '@/composables/useHover';
-import { cancelDeleteBubble, deleteLayerImmediate } from '@/composables/useDelete';
-import { generateDrawnId, persistAllDrawnLayers } from '@/composables/usePersistDrawn';
 
-/* -------------------- Leaflet плагины -------------------- */
+import { useDeleteConfirm } from '@/composables/useDeleteConfirm';
 
-import 'leaflet.markercluster';
-import 'leaflet.markercluster/dist/MarkerCluster.css';
-import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
-
+import L, { Polyline, Polygon, LeafletEvent } from 'leaflet';
+import { LMap, LTileLayer, LPolygon } from '@vue-leaflet/vue-leaflet';
+import { isGeoman } from '@/lib/guards';
 import '@geoman-io/leaflet-geoman-free';
-import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css';
-
-import type { GeoPoint, GeoPolygon } from '@/types/geo.types';
-import type { Country, Region } from '@gis/shared/schemas';
-import { getPolygonCoordsFromGeoJSON, getPointCoordsFromGeoJSON } from '@/composables/useGeo';
 import type {
   DrawnLayer,
   DrawnPmLayer,
   PmLayer,
   LayerWithEach,
   GeomanPM,
-  PMAttachable,
 } from '@/types/leaflet.types';
-import { isGeoman } from '@/types/leaflet.types';
+import 'leaflet.markercluster';
 
-// MarkerCluster usage: rely on ambient augmentation and check runtime availability instead of a separate factory helper
+const mapStore = useMapStore();
+const mapRef = ref<InstanceType<typeof LMap> | null>(null);
 
-/* -------------------- Constants -------------------- */
-
-// Use a reusable marker icon factory (color + size options)
+let markerClusterGroup: L.MarkerClusterGroup | null = null;
 const defaultMarkerIcon = createMarkerIcon('green', 'medium');
 
-const mapRef = ref<InstanceType<typeof LMap> | null>(null);
-let markerClusterGroup: L.MarkerClusterGroup | null = null;
-
-// Pinia map store
-const mapStore = useMapStore();
-
-/* -------------------- Queries -------------------- */
+/* Query preloaded geographic data (countries, regions, cities) */
 
 const { data: citiesData } = useQuery<City[]>({
   queryKey: ['cities'],
@@ -124,7 +115,7 @@ const { data: regionsData } = useQuery<Region[]>({
   queryFn: () => trpc.regions.getRegions.query(),
 });
 
-/* -------------------- Parsing -------------------- */
+/* Process geographic data to extract coordinates */
 
 const cities = computed(() =>
   (citiesData.value ?? []).map((c) => ({
@@ -147,9 +138,7 @@ const regions = computed(() =>
   })),
 );
 
-/* -------------------- Geo helpers (moved to composable) -------------------- */
-
-/* -------------------- Computed -------------------- */
+/* Compute coordinates for rendering */
 
 const countriesWithCoords = computed(() =>
   countries.value
@@ -182,6 +171,8 @@ const citiesWithCoords = computed(
     })[],
 );
 
+/* Cities with polygon geometries (Clusters) */
+
 const citiesWithPolygonCoords = computed(() =>
   cities.value
     .map((city) => ({
@@ -194,117 +185,12 @@ const citiesWithPolygonCoords = computed(() =>
     .filter((city) => city.geometry.length > 0),
 );
 
-/* -------------------- Hover helpers (moved to composable) -------------------- */
+/* Handlers  */
 
-const onEscapeKey = (e: KeyboardEvent) => {
-  if (e.key !== 'Escape') return;
-  try {
-    const leafletMap = mapRef.value?.leafletObject as L.Map | undefined;
-    const pmLocal = (leafletMap as L.Map & { pm?: GeomanPM })?.pm;
-    if (isGeoman(pmLocal)) {
-      try {
-        if (typeof pmLocal.disableDraw === 'function') pmLocal.disableDraw();
-      } catch {}
-      try {
-        if (typeof pmLocal.disableGlobalEditMode === 'function') {
-          try {
-            const anyPm = pmLocal;
-            if (
-              typeof anyPm._layerAddedEdit === 'function' &&
-              typeof anyPm.throttledReInitEdit === 'function'
-            ) {
-              try {
-                pmLocal.disableGlobalEditMode();
-              } catch {}
-            } else {
-              const mapL = mapRef.value?.leafletObject as L.Map | undefined;
-              if (mapL) {
-                try {
-                  mapL.eachLayer((layer: L.Layer & PMAttachable) => {
-                    try {
-                      const lpm = layer.pm;
-                      if (lpm && typeof lpm.disable === 'function') {
-                        try {
-                          lpm.disable();
-                        } catch {}
-                      }
-                    } catch {}
-                  });
-                } catch {}
-              }
-            }
-          } catch {}
-        }
-      } catch {}
-    }
-    if (leafletMap) {
-      try {
-        if (leafletMap.dragging && !leafletMap.dragging.enabled()) leafletMap.dragging.enable();
-        if (leafletMap.scrollWheelZoom && typeof leafletMap.scrollWheelZoom.enable === 'function')
-          leafletMap.scrollWheelZoom.enable();
-        if (leafletMap.doubleClickZoom && typeof leafletMap.doubleClickZoom.enable === 'function')
-          leafletMap.doubleClickZoom.enable();
-        if (leafletMap.boxZoom && typeof leafletMap.boxZoom.enable === 'function')
-          leafletMap.boxZoom.enable();
-        if (leafletMap.keyboard && typeof leafletMap.keyboard.enable === 'function')
-          leafletMap.keyboard.enable();
-      } catch {
-        /* ignore */
-      }
-    }
-  } catch {
-    // ignore
-  }
+useEscapeHandler(mapRef, mapStore);
+useDeleteConfirm(mapRef);
 
-  mapStore.activeTool = null;
-  mapStore.globalEdit = false;
-};
-try {
-  document.addEventListener('keydown', onEscapeKey);
-} catch {
-  /* ignore */
-}
-
-// remove on unmount
-const onDeleteConfirm = (e: Event) => {
-  try {
-    const detail = (e as CustomEvent)?.detail as { layer?: L.Layer } | undefined;
-    const layer = detail?.layer as L.Layer | undefined;
-    const leafletMap = mapRef.value?.leafletObject as L.Map | undefined;
-    if (layer && leafletMap) {
-      try {
-        deleteLayerImmediate(leafletMap, layer);
-      } catch {
-        /* ignore */
-      }
-    }
-    cancelDeleteBubble();
-  } catch {}
-};
-try {
-  window.addEventListener('map:delete-confirm', onDeleteConfirm);
-} catch {}
-onBeforeUnmount(() => {
-  try {
-    document.removeEventListener('keydown', onEscapeKey);
-  } catch {}
-  try {
-    window.removeEventListener('map:delete-confirm', onDeleteConfirm);
-  } catch {}
-});
-
-// Hover and edit listener helpers moved to composables:
-// - '@/composables/useHover' provides attachHoverListeners/detachHoverListeners
-// - '@/composables/useMeasurements' provides attachEditListeners/detachEditListeners
-
-// Delete bubble UI moved to composable: '@/composables/useDeleteBubble'
-// delete behavior moved to composable: useDeleteBubble.deleteLayerImmediate(map, target, ...)
-// see: '@/composables/useDeleteBubble'
-
-/* -------------------- Map init -------------------- */
-
-// draw persistence helpers have been moved to `composables/usePersistDrawn`
-// using: `generateDrawnId` and `persistAllDrawnLayers(map)`
+/* Map Initialization */
 
 const initMap = useDebounceFn(async (): Promise<void> => {
   await nextTick();
@@ -417,6 +303,57 @@ const initMap = useDebounceFn(async (): Promise<void> => {
     }
   }
 
+  // helper: mark a layer as user-drawn, enable PM, attach delete & hover handlers
+  function makeUserLayer(l: L.Layer | null | undefined, id?: string | undefined): void {
+    if (!l) return;
+    try {
+      const dl = l as DrawnPmLayer;
+      dl.drawnId = id ?? dl.drawnId ?? generateDrawnId();
+      dl.options = dl.options || {};
+      (dl.options as Record<string, unknown>).pmIgnore = false;
+      if (dl.pm && typeof dl.pm.enable === 'function') {
+        try {
+          dl.pm.enable();
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      attachContextDelete(l as L.Layer);
+    } catch {
+      /* ignore */
+    }
+    try {
+      attachHoverListeners(l as L.Layer);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // helper: set pm ignore and disable pm on a layer
+  function setPmIgnoreOnLayer(layer: L.Layer): void {
+    try {
+      const maybe = layer as L.Layer & {
+        options?: Record<string, unknown>;
+        pm?: { disable?: () => void } & Record<string, unknown>;
+      };
+      maybe.options = maybe.options || {};
+      (maybe.options as Record<string, unknown>).pmIgnore = true;
+      if (maybe.pm && typeof maybe.pm.disable === 'function') {
+        try {
+          maybe.pm.disable();
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   // restore drawn features from store
   if (mapStore.drawn?.features?.length) {
     L.geoJSON(mapStore.drawn, {
@@ -435,39 +372,11 @@ const initMap = useDebounceFn(async (): Promise<void> => {
           ) {
             (layer as L.Layer & { eachLayer?: (fn: (l: L.Layer) => void) => void }).eachLayer!(
               (sub: L.Layer) => {
-                const s = sub as DrawnPmLayer;
-                s.drawnId = idFromFeature ?? s.drawnId ?? generateDrawnId();
-                s.options = s.options || {};
-                (s.options as Record<string, unknown>).pmIgnore = false;
-                if (s.pm && typeof s.pm.enable === 'function') {
-                  try {
-                    s.pm.enable();
-                  } catch {
-                    /* ignore */
-                  }
-                }
-                // attach right-click-to-delete handler to restored sublayer
-                attachContextDelete(sub);
-                // show measurements on hover
-                attachHoverListeners(sub);
+                makeUserLayer(sub, idFromFeature);
               },
             );
           } else {
-            const drawnLayer = layer as DrawnPmLayer;
-            drawnLayer.drawnId = idFromFeature ?? drawnLayer.drawnId ?? generateDrawnId();
-            drawnLayer.options = drawnLayer.options || {};
-            (drawnLayer.options as Record<string, unknown>).pmIgnore = false;
-            if (drawnLayer.pm && typeof drawnLayer.pm.enable === 'function') {
-              try {
-                drawnLayer.pm.enable();
-              } catch {
-                /* ignore */
-              }
-            }
-            // attach right-click-to-delete handler to restored layer
-            attachContextDelete(layer);
-            // show measurements on hover
-            attachHoverListeners(layer);
+            makeUserLayer(layer, idFromFeature);
           }
         } catch {
           // ignore
@@ -480,49 +389,17 @@ const initMap = useDebounceFn(async (): Promise<void> => {
   function disablePmOnAllLayers(map: L.Map): void {
     map.eachLayer((layer: L.Layer) => {
       try {
-        // skip user-drawn layers (they have `drawnId` set)
         if ((layer as DrawnLayer).drawnId) return;
-
-        type LayerWithPm = L.Layer & {
-          options?: Record<string, unknown>;
-          pm?: { disable?: () => void } & Record<string, unknown>;
-          eachLayer?: (fn: (l: L.Layer) => void) => void;
-        };
-        const maybe = layer as LayerWithPm;
-
-        maybe.options = maybe.options || {};
-        (maybe.options as Record<string, unknown>).pmIgnore = true;
-        if (maybe.pm && typeof maybe.pm.disable === 'function') {
-          try {
-            maybe.pm.disable();
-          } catch {
-            /* ignore */
-          }
-        }
-
-        // if the layer is a group (e.g., geoJSON group), apply to sublayers as well
-        if (typeof maybe.eachLayer === 'function') {
-          try {
-            maybe.eachLayer!((sub: L.Layer) => {
+        try {
+          setPmIgnoreOnLayer(layer);
+          (layer as L.Layer & { eachLayer?: (fn: (l: L.Layer) => void) => void }).eachLayer?.(
+            (sub: L.Layer) => {
               if ((sub as DrawnLayer).drawnId) return;
-              type SubWithPm = L.Layer & {
-                options?: Record<string, unknown>;
-                pm?: { disable?: () => void };
-              };
-              const ms = sub as SubWithPm;
-              ms.options = ms.options || {};
-              (ms.options as Record<string, unknown>).pmIgnore = true;
-              if (ms.pm && typeof ms.pm.disable === 'function') {
-                try {
-                  ms.pm.disable();
-                } catch {
-                  /* ignore */
-                }
-              }
-            });
-          } catch {
-            // ignore
-          }
+              setPmIgnoreOnLayer(sub);
+            },
+          );
+        } catch {
+          /* ignore */
         }
       } catch {
         // ignore per-layer errors
@@ -679,21 +556,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
         typeof getLatLngs === 'function' ? getLatLngs.call(layer) : undefined,
       );
     }
-    const dl = layer as DrawnPmLayer;
-    dl.drawnId = dl.drawnId ?? generateDrawnId();
-    dl.options = dl.options || {};
-    (dl.options as Record<string, unknown>).pmIgnore = false;
-    if (dl.pm && typeof dl.pm.enable === 'function') {
-      try {
-        dl.pm.enable();
-      } catch {
-        /* ignore */
-      }
-    }
-    // attach right-click-to-delete handler
-    attachContextDelete(layer as L.Layer);
-    // attach hover listeners to show measurements
-    attachHoverListeners(layer as L.Layer);
+    makeUserLayer(layer);
     persistAllDrawnLayers(leafletMap);
   });
 
@@ -787,24 +650,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
           /* ignore */
         }
 
-        const dl2 = layer as L.Circle & DrawnPmLayer;
-        dl2.drawnId = dl2.drawnId ?? generateDrawnId();
-        dl2.options = dl2.options || {};
-        (dl2.options as Record<string, unknown>).pmIgnore = false;
-        if (dl2.pm && typeof dl2.pm.enable === 'function') {
-          try {
-            dl2.pm.enable();
-          } catch {
-            /* ignore */
-          }
-        }
-        // attach right-click delete and hover measurement handlers for newly created circles
-        try {
-          attachContextDelete(layer);
-        } catch {}
-        try {
-          attachHoverListeners(layer);
-        } catch {}
+        makeUserLayer(layer);
 
         setTimeout(() => (measurementText.value = ''), 3000);
         persistAllDrawnLayers(leafletMap);
@@ -826,24 +672,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
           measurementText.value = formatDistance(computeLengthLatLngs(pts));
         }
         setTimeout(() => (measurementText.value = ''), 3000);
-        const dl2 = layer as DrawnPmLayer;
-        dl2.drawnId = dl2.drawnId ?? generateDrawnId();
-        dl2.options = dl2.options || {};
-        (dl2.options as Record<string, unknown>).pmIgnore = false;
-        if (dl2.pm && typeof dl2.pm.enable === 'function') {
-          try {
-            dl2.pm.enable();
-          } catch {
-            /* ignore */
-          }
-        }
-        // attach right-click delete and hover measurement handlers for newly created layer
-        try {
-          attachContextDelete(layer);
-        } catch {}
-        try {
-          attachHoverListeners(layer);
-        } catch {}
+        makeUserLayer(layer);
         persistAllDrawnLayers(leafletMap);
       }
     } catch {
@@ -861,28 +690,7 @@ const initMap = useDebounceFn(async (): Promise<void> => {
       const maybe = e as { layer?: L.Layer; layers?: L.Layer[] };
       function processLayer(l: L.Layer | null | undefined) {
         if (!l) return;
-        try {
-          // mark as user-drawn, enable PM where available
-          const dp = l as DrawnPmLayer;
-          dp.drawnId = dp.drawnId ?? generateDrawnId();
-          dp.options = dp.options || {};
-          (dp.options as Record<string, unknown>).pmIgnore = false;
-          if (dp.pm && typeof dp.pm.enable === 'function') {
-            try {
-              dp.pm.enable();
-            } catch {
-              /* ignore */
-            }
-          }
-        } catch {
-          /* ignore */
-        }
-        try {
-          attachContextDelete(l);
-        } catch {}
-        try {
-          attachHoverListeners(l);
-        } catch {}
+        makeUserLayer(l);
       }
 
       if (maybe.layer) {
