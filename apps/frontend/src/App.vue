@@ -2,7 +2,7 @@
   <l-map ref="mapRef" :zoom="6" :center="[50.45, 30.52]" style="height: 100vh; width: 100%">
     <l-tile-layer
       url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-      attribution=" © OpenStreetMap Contribution  |  Created by Vladyslav Dobrovolskyi"
+      :attribution="`© OpenStreetMap contributors | ${LABEL}`"
     />
 
     <!-- Countries -->
@@ -37,6 +37,8 @@
 </template>
 
 <script setup lang="ts">
+const LABEL = import.meta.env.VITE_FOOTER_LABEL || 'Created by Vladyslav Dobrovolskyi';
+
 import MeasurementBadge from '@/components/MeasurementBadge.vue';
 import DeleteBubble from '@/components/DeleteBubble.vue';
 
