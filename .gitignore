@@ -35,6 +35,8 @@ logs/
 
 # Environment variables
 .env
+.env.development
+.env.production
 .env.*.local
 
 # Database data

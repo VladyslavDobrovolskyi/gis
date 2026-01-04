@@ -41,7 +41,7 @@
     "backend:pgtyped": "pnpm --filter @gis/backend run generate:pgtyped",
     "prepare": "husky install",
     "devtools": "node scripts/open-chrome.cjs",
-    "dbhub": "node scripts/dbhub.cjs",
+    "dbhub": "cross-env NODE_ENV=development node scripts/dbhub.cjs",
     "database:recreate": "rimraf ./database/data && docker compose up -d --build",
     "database:seed": "node scripts/import_gis_data.cjs"
   },
@@ -53,7 +53,9 @@
     "@upstash/context7-mcp": "^1.0.33",
     "chrome-devtools-mcp": "^0.12.1",
     "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
     "dotenv": "^17.2.3",
+    "dotenv-flow": "^4.1.0",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.4",
