@@ -1,9 +1,9 @@
 /* GPT generated */
 import { Pool, PoolClient, QueryResult } from 'pg';
 import type { PreparedQuery } from '@pgtyped/runtime';
-import * as dotenv from 'dotenv';
+import * as env from 'dotenv-flow';
 
-dotenv.config();
+env.config();
 
 if (!process.env.DATABASE_URL) {
   throw new Error('DATABASE_URL is not set in environment variables');
