@@ -4,9 +4,9 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "vite",
-    "build": "pnpm run clean && vite build",
-    "start": "vite preview",
+    "dev": "vite --mode development",
+    "build": "pnpm run clean && vite build --mode production",
+    "start": "vite --mode production preview",
     "lint": "eslint --ext .ts,.vue src",
     "lint:fix": "eslint --ext .ts,.vue src --fix",
     "prettier:check": "pnpm prettier --check **/*.{ts,js,json,html,css,yaml,yml}",
