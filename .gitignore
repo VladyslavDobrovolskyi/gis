@@ -41,7 +41,15 @@ logs/
 
 # Database data
 database/data/
-generated/
 #Google Chrome 
 chrome-profile
 
+#Reports
+allure
+apps/backend/allure
+apps/frontend/allure
+e2e/allure
+allure-report/
+apps/backend/allure-results/
+apps/frontend/allure-results/
+e2e/allure-results/
