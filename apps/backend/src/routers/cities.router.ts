@@ -3,14 +3,14 @@ import { CitiesSchema, CitySchema } from '@gis/shared/schemas';
 import { getAllCities, getCityById } from '@db/generated/cities.types';
 import { runQuery } from '@db/runner';
 
-export const cityRouter = router({
+export const citiesRouter = router({
   getCities: publicProcedure
     .meta({
       openapi: {
         method: 'GET',
-        path: '/city',
+        path: '/cities',
         summary: 'Get all cities with geometry',
-        description: 'Возвращает список городов с геометрией (GeoJSON)',
+        description: 'Returns a list of cities with geometry (GeoJSON)',
       },
     })
     .output(CitiesSchema)
@@ -23,9 +23,9 @@ export const cityRouter = router({
     .meta({
       openapi: {
         method: 'GET',
-        path: '/city/{ogc_fid}',
+        path: '/cities/{ogc_fid}',
         summary: 'Get city by ogc_fid',
-        description: 'Возвращает город по ogc_fid',
+        description: 'Returns a city by ogc_fid',
       },
     })
     .output(CitySchema)

@@ -3,14 +3,14 @@ import { CountriesSchema, CountrySchema } from '@gis/shared/schemas';
 import { getAllCountries, getCountryById } from '@db/generated/countries.types';
 import { runQuery } from '@db/runner';
 
-export const countryRouter = router({
+export const countriesRouter = router({
   getCountries: publicProcedure
     .meta({
       openapi: {
         method: 'GET',
-        path: '/country',
+        path: '/countries',
         summary: 'Get all countries with geometry',
-        description: 'Возвращает список стран с геометрией (GeoJSON)',
+        description: 'Returns a list of countries with geometry (GeoJSON)',
       },
     })
     .output(CountriesSchema)
@@ -23,9 +23,9 @@ export const countryRouter = router({
     .meta({
       openapi: {
         method: 'GET',
-        path: '/country/{ogc_fid}',
+        path: '/countries/{ogc_fid}',
         summary: 'Get country by ogc_fid',
-        description: 'Возвращает страну по ogc_fid',
+        description: 'Returns a country by ogc_fid',
       },
     })
     .output(CountrySchema)

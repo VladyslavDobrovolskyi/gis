@@ -2,14 +2,14 @@ import { router, publicProcedure } from '../trpc';
 import { RegionsSchema, RegionSchema } from '@gis/shared/schemas';
 import { getAllRegions, getRegionById } from '@db/generated/regions.types';
 import { runQuery } from '@db/runner';
-export const regionRouter = router({
+export const regionsRouter = router({
   getRegions: publicProcedure
     .meta({
       openapi: {
         method: 'GET',
-        path: '/region',
+        path: '/regions',
         summary: 'Get all regions with geometry',
-        description: 'Возвращает список регионов с геометрией (GeoJSON)',
+        description: 'Returns a list of regions with geometry (GeoJSON)',
       },
     })
     .output(RegionsSchema)
@@ -22,9 +22,9 @@ export const regionRouter = router({
     .meta({
       openapi: {
         method: 'GET',
-        path: '/region/{ogc_fid}',
+        path: '/regions/{ogc_fid}',
         summary: 'Get region by ogc_fid',
-        description: 'Возвращает регион по ogc_fid',
+        description: 'Returns a region by ogc_fid',
       },
     })
     .output(RegionSchema)
