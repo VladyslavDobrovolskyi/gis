@@ -1,0 +1,337 @@
+name: 🚀 Build, Test and Deploy Development
+
+on:
+  push:
+    branches:
+      - deploy_setup
+
+jobs:
+  pre-check:
+    name: 🔍 Check Changes
+    runs-on: ubuntu-latest
+    environment: development
+    outputs:
+      backend_changed: ${{ steps.filter.outputs.backend }}
+      frontend_changed: ${{ steps.filter.outputs.frontend }}
+      run_e2e: ${{ steps.check-e2e.outputs.run_e2e }}
+      run_e2e_forced: ${{ steps.check-e2e.outputs.run_e2e_forced }}
+      build_id: ${{ steps.prep.outputs.build_id }}
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📂 Prepare naming
+        id: prep
+        run: |
+          # Формат: development-build-123-20240520
+          echo "build_id=${{ vars.ENV_TAG }}-build-${{ github.run_number }}-$(date +%Y%m%d)" >> $GITHUB_OUTPUT
+
+      - name: 📂 Path Filter
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - 'apps/backend/**'
+              - 'packages/shared/**'
+              - 'docker/Backend/**'
+              - 'docker-compose.yaml'
+            frontend:
+              - 'apps/frontend/**'
+              - 'packages/shared/**'
+              - 'docker/Frontend/**'
+
+      - name: 🏷️ Check for E2E\E2EF tag
+        id: check-e2e
+        shell: bash
+        run: |
+          MSG="${{ github.event.head_commit.message }}"
+          if [[ "$MSG" == *"[E2E]"* ]]; then echo "run_e2e=true" >> $GITHUB_OUTPUT; else echo "run_e2e=false" >> $GITHUB_OUTPUT; fi
+          if [[ "$MSG" == *"[E2EF]"* ]]; then echo "run_e2e_forced=true" >> $GITHUB_OUTPUT; else echo "run_e2e_forced=false" >> $GITHUB_OUTPUT; fi
+
+  test-backend:
+    name: 🧪 Backend Tests
+    needs: pre-check
+    if: needs.pre-check.outputs.backend_changed == 'true' || needs.pre-check.outputs.run_e2e_forced == 'true'
+    environment: development
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      - name: 📦 Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 10
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+      - name: 🛠️ Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: 🏗️ Build shared packages
+        run: pnpm shared:build
+      - name: 🗄️ Start database
+        run: docker compose up -d database
+      - name: ⏳ Wait for DB
+        run: |
+          for i in {1..30}; do
+            docker exec gis_postgres pg_isready -U gis_user && exit 0
+            sleep 2
+          done
+          exit 1
+      - name: 🌍 Install GDAL
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gdal-bin
+      - name: 🌱 Seed database
+        run: pnpm run database:seed
+        env:
+          DATABASE_URL: postgresql://gis_user:gis_pass@localhost:5432/gis_db
+      - name: ⚙️ Run tests
+        run: pnpm backend:test
+        env:
+          DATABASE_URL: postgresql://gis_user:gis_pass@localhost:5432/gis_db
+      - name: 📤 Upload Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-backend
+          path: apps/backend/allure-results
+          retention-days: 1
+
+  test-frontend:
+    name: 🖼️ Frontend Tests
+    needs: pre-check
+    if: needs.pre-check.outputs.frontend_changed == 'true'
+    environment: development
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      - name: 📦 Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 10
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+      - name: 🛠️ Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: 🏗️ Build shared packages
+        run: pnpm shared:build
+      - name: ⚙️ Run tests
+        run: pnpm frontend:test
+      - name: 📤 Upload Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-frontend
+          path: apps/frontend/allure-results
+          retention-days: 1
+
+  e2e-tests:
+    name: 🎭 E2E Tests
+    needs: [pre-check, test-backend, test-frontend]
+    if: |
+      always() && needs.pre-check.result == 'success' && (
+        needs.pre-check.outputs.run_e2e_forced == 'true' || 
+        (needs.pre-check.outputs.run_e2e == 'true' && 
+         !contains(needs.test-backend.result, 'failure') && 
+         !contains(needs.test-frontend.result, 'failure'))
+      )
+    environment: development
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      - name: 📦 Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 10
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+      - name: 🛠️ Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: 🌐 Install Playwright Browsers
+        run: pnpm e2e:install-browsers
+      - name: 🎭 Run E2E
+        run: pnpm e2e:headless
+      - name: 📤 Upload Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-e2e
+          path: e2e/allure-results
+          retention-days: 1
+
+  allure-report:
+    name: 📊 Generate Allure Report
+    needs: [test-backend, test-frontend, e2e-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      - name: 📦 Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 10
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+      - name: 🛠️ Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: 📂 Create result directories
+        run: mkdir -p apps/backend/allure-results apps/frontend/allure-results e2e/allure-results
+
+      - name: 📥 Download Backend Results
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: allure-backend
+          path: apps/backend/allure-results
+
+      - name: 📥 Download Frontend Results
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: allure-frontend
+          path: apps/frontend/allure-results
+
+      - name: 📥 Download E2E Results
+        if: needs.e2e-tests.result == 'success' || needs.e2e-tests.result == 'failure'
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: allure-e2e
+          path: e2e/allure-results
+      - name: ⚙️ Build and Archive Report
+        run: |
+          pnpm run allure:report
+          tar -czf report.tar.gz -C allure-report .
+      - name: 📤 Upload Report Archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-report-archive
+          path: report.tar.gz
+
+  deploy-report:
+    name: 📊 Deploy Report
+    needs: [pre-check, allure-report]
+    if: always() && needs.allure-report.result == 'success'
+    environment: development
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Download Report Archive
+        uses: actions/download-artifact@v4
+        with:
+          name: final-report-archive
+      - name: 📤 Copy Archive via SCP
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.DEPLOYER_USERNAME }}
+          key: ${{ secrets.DEPLOYER_SSH }}
+          source: 'report.tar.gz'
+          target: '${{ vars.DEPLOYER_PATH }}/reports/${{ needs.pre-check.outputs.build_id }}'
+      - name: 📡 SSH Extract & Archive Old Reports
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.DEPLOYER_USERNAME }}
+          key: ${{ secrets.DEPLOYER_SSH }}
+          script: |
+            ENV_TAG="${{ vars.ENV_TAG }}"
+            REPORT_ARCHIVE="${{ vars.REPORT_ARCHIVE }}"
+            REPORTS_DIR="${{ vars.DEPLOYER_PATH }}/reports"
+            BUILD_DIR="$REPORTS_DIR/${{ needs.pre-check.outputs.build_id }}"
+            ARCHIVE_PATH="$REPORTS_DIR/$REPORT_ARCHIVE"
+
+            if [ -d "$BUILD_DIR" ]; then
+              cd "$BUILD_DIR" && tar -xzf report.tar.gz && rm report.tar.gz
+            fi
+
+            cd "$REPORTS_DIR"
+            mkdir -p "$ARCHIVE_PATH"
+            OLD_REPORTS=$(find . -maxdepth 1 -name "${ENV_TAG}-build-*" -type d -mtime +30 | sed 's|./||')
+            if [ -n "$OLD_REPORTS" ]; then
+              START_DATE=$(echo "$OLD_REPORTS" | cut -d'-' -f4 | sort | head -n 1)
+              END_DATE=$(echo "$OLD_REPORTS" | cut -d'-' -f4 | sort | tail -n 1)
+              RANGE_FILE="${ENV_TAG}_archive_${START_DATE}_to_${END_DATE}.tar.gz"
+              tar -czf "$ARCHIVE_PATH/$RANGE_FILE" $OLD_REPORTS && rm -rf $OLD_REPORTS
+            fi
+
+  build:
+    name: 📦 Build & Push
+    needs: [pre-check, test-backend, test-frontend, e2e-tests]
+    if: |
+      always() && needs.pre-check.result == 'success' &&
+      (needs.test-backend.result == 'success' || needs.test-backend.result == 'skipped') &&
+      (needs.test-frontend.result == 'success' || needs.test-frontend.result == 'skipped') &&
+      (needs.e2e-tests.result == 'success' || needs.e2e-tests.result == 'skipped')
+    environment: development
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      - name: 🛠️ Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: 🔑 Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: 🖼️ Build & Push Frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/Frontend
+          push: true
+          tags: |
+            vladyslavdobrovolskyi/gis:frontend-${{ needs.pre-check.outputs.build_id }}
+            vladyslavdobrovolskyi/gis:frontend_development
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VITE_API_URL=${{ vars.VITE_API_URL }}
+            VITE_FOOTER_LABEL=${{ vars.VITE_FOOTER_LABEL }} (${{ needs.pre-check.outputs.build_id }})
+      - name: 🧠 Build & Push Backend
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/Backend
+          push: true
+          tags: |
+            vladyslavdobrovolskyi/gis:backend-${{ needs.pre-check.outputs.build_id }}
+            vladyslavdobrovolskyi/gis:backend_development
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-app:
+    name: 🚚 Deploy Application
+    needs: [pre-check, build]
+    if: always() && needs.build.result == 'success'
+    environment: development
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📡 SSH Update Tag & Restart
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.DEPLOYER_USERNAME }}
+          key: ${{ secrets.DEPLOYER_SSH }}
+          script: |
+            cd ${{ vars.DEPLOYER_PATH }}
+            sed -i '/^APP_TAG=/d' .env || true
+            echo "APP_TAG=${{ needs.pre-check.outputs.build_id }}" >> .env
+            docker compose pull ${{ vars.DEPLOY_TARGETS }}
+            docker compose up -d ${{ vars.DEPLOY_TARGETS }}
+            docker image prune -f
