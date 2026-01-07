@@ -19,7 +19,7 @@ app.use(
 );
 
 app.use(
-  '/',
+  '/api',
   createOpenApiExpressMiddleware({
     router: appRouter,
   }),

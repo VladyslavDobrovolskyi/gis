@@ -6,9 +6,9 @@ import env from 'dotenv-flow';
 env.config();
 
 export const openApiDocument = generateOpenApiDocument(appRouter, {
-  title: `${process.env.API_TITLE}`,
-  version: `${process.env.API_VERSION}`,
-  baseUrl: `${process.env.API_URL}:${process.env.API_PORT}`,
+  title: `${process.env.SWAGGER_API_TITLE}`,
+  version: `${process.env.SWAGGER_API_VERSION}`,
+  baseUrl: `${process.env.SWAGGER_API_URL}`,
 });
 
 export const setupSwagger = (app: Application) => {
