@@ -6,6 +6,10 @@ dist
 build
 **/build/
 
+database/
+postgres-data/
+*.db
+
 .env
 .env.*
 !.env.example
