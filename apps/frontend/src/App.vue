@@ -1,8 +1,9 @@
 <template>
+  <Loader v-if="isAnyLoading" />
   <l-map ref="mapRef" :zoom="6" :center="[50.45, 30.52]" style="height: 100vh; width: 100%">
     <l-tile-layer
       url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-      attribution=" © OpenStreetMap Contribution  |  Created by Vladyslav Dobrovolskyi"
+      :attribution="`© OpenStreetMap contributors | ${LABEL}`"
     />
 
     <!-- Countries -->
@@ -37,8 +38,11 @@
 </template>
 
 <script setup lang="ts">
+const LABEL = import.meta.env.VITE_FOOTER_LABEL || 'Created by Vladyslav Dobrovolskyi';
+
 import MeasurementBadge from '@/components/MeasurementBadge.vue';
 import DeleteBubble from '@/components/DeleteBubble.vue';
+import Loader from '@/components/Loader.vue';
 
 import { ref, computed, nextTick, watch, onBeforeUnmount } from 'vue';
 import { useQuery } from '@tanstack/vue-query';
@@ -83,20 +87,27 @@ onBeforeUnmount(() => {
 
 /* Query preloaded geographic data (countries, regions, cities) */
 
-const { data: citiesData } = useQuery<City[]>({
+const { data: citiesData, isLoading: citiesLoading } = useQuery<City[]>({
   queryKey: ['cities'],
   queryFn: () => trpc.cities.getCities.query(),
 });
 
-const { data: countriesData } = useQuery<Country[]>({
+const { data: countriesData, isLoading: countriesLoading } = useQuery<Country[]>({
   queryKey: ['countries'],
   queryFn: () => trpc.countries.getCountries.query(),
 });
 
-const { data: regionsData } = useQuery<Region[]>({
+const { data: regionsData, isLoading: regionsLoading } = useQuery<Region[]>({
   queryKey: ['regions'],
   queryFn: () => trpc.regions.getRegions.query(),
 });
+
+const isAnyLoading = computed(
+  () =>
+    (citiesLoading?.value ?? false) ||
+    (countriesLoading?.value ?? false) ||
+    (regionsLoading?.value ?? false),
+);
 
 /* Process geographic data to extract coordinates */
 

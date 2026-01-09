@@ -1,5 +1,5 @@
 services:
-  postgres-postgis:
+  database:
     image: postgis/postgis:18-3.6
     container_name: gis_postgres
     environment:

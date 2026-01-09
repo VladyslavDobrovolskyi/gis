@@ -1,6 +1,6 @@
 const { execSync } = require('child_process');
 const path = require('path');
-const dotenv = require('dotenv');
+const dotenv = require('dotenv-flow');
 
 dotenv.config({ path: path.resolve(__dirname, '../apps/backend/.env') });
 let dsn = process.env.DATABASE_URL;

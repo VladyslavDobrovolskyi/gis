@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-require('dotenv').config({ path: path.resolve(__dirname, '../apps/backend/.env') });
+require('dotenv-flow').config({ path: path.resolve(__dirname, '../apps/backend/') });
 const DATABASE_URL = process.env.DATABASE_URL;
 const dsn = DATABASE_URL.replace('localhost', 'host.docker.internal');
 

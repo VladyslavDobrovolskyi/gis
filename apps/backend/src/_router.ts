@@ -1,12 +1,12 @@
 import { router } from './trpc';
-import { cityRouter } from './routers/city.router';
-import { countryRouter } from './routers/country.router';
-import { regionRouter } from './routers/region.router';
+import { citiesRouter } from './routers/cities.router';
+import { countriesRouter } from './routers/countries.router';
+import { regionsRouter } from './routers/regions.router';
 
 export const appRouter = router({
-  cities: cityRouter,
-  countries: countryRouter,
-  regions: regionRouter,
+  cities: citiesRouter,
+  countries: countriesRouter,
+  regions: regionsRouter,
 });
 
 export type AppRouter = typeof appRouter;

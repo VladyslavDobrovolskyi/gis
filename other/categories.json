@@ -1,0 +1,59 @@
+[
+  {
+    "name": "🌍 GIS & Spatial Data Errors (PostGIS/Leaflet)",
+    "matchedStatuses": ["failed", "broken"],
+    "messageRegex": ".*(geometry|geography|postgis|coordinates|srid|geojson|longitude|latitude|bbox|tile|leaflet).*|.*invalid GML.*",
+    "traceRegex": ".*leaflet.*|.*postgis.*"
+  },
+  {
+    "name": "⚡ tRPC & Server Procedure Failures",
+    "matchedStatuses": ["failed", "broken"],
+    "messageRegex": ".*(TRPC_ERROR|INTERNAL_SERVER_ERROR|UNAUTHORIZED|FORBIDDEN|BAD_REQUEST).*|.*input validation failed.*"
+  },
+  {
+    "name": "🟢 Backend: Express & Logic (Jest)",
+    "matchedStatuses": ["failed", "broken"],
+    "traceRegex": ".*apps/backend.*|.*jest.*|.*supertest.*"
+  },
+  {
+    "name": "🔴 Frontend: Vue & Vite Components",
+    "matchedStatuses": ["failed", "broken"],
+    "traceRegex": ".*apps/frontend.*|.*@vue.*|.*jsdom.*|.*@vite.*"
+  },
+  {
+    "name": "🎭 E2E: User Flows (Playwright)",
+    "matchedStatuses": ["broken", "failed"],
+    "traceRegex": ".*e2e/.*|.*playwright.*",
+    "messageRegex": ".*target closed.*|.*page.goto.*"
+  },
+  {
+    "name": "🗄️ Database & SQL (PostgreSQL)",
+    "matchedStatuses": ["failed", "broken"],
+    "messageRegex": ".*(query|database|postgres|sql|unique constraint|foreign key|deadlock|serialization failure).*|.*connect ECONNREFUSED 127.0.0.1:5432.*"
+  },
+  {
+    "name": "📡 API & Network (fetch/HTTP/Express)",
+    "matchedStatuses": ["failed"],
+    "messageRegex": ".*(status code [45]|fetch|network error|ECONNREFUSED).*|.*expected 200.*"
+  },
+  {
+    "name": "⏳ Timeouts & Element Wait",
+    "matchedStatuses": ["broken"],
+    "messageRegex": ".*(timeout|exceeded|timed out).*|.*waiting for selector.*|.*element not found.*"
+  },
+  {
+    "name": "🔒 Auth & Session Errors",
+    "matchedStatuses": ["failed", "broken"],
+    "messageRegex": ".*(jwt|token|auth|unauthorized|forbidden|session|login|logout|passport|oauth).*"
+  },
+  {
+    "name": "🧪 Logic Assertion Errors",
+    "matchedStatuses": ["failed"],
+    "messageRegex": ".*expected.*to.*|.*received.*|.*toBeTruthy.*"
+  },
+  {
+    "name": "⚙️ Config & Env Issues",
+    "matchedStatuses": ["failed", "broken"],
+    "messageRegex": ".*(dotenv|process.env|configuration|missing env).*"
+  }
+]
