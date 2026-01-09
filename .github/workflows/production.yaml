@@ -1,15 +1,15 @@
-name: 🚀 Build, Test and Deploy Development
+name: 🚀 Build, Test and Deploy Production
 
 on:
   push:
     branches:
-      - dev
+      - main
 
 jobs:
   pre-check:
     name: 🔍 Check Changes
     runs-on: ubuntu-latest
-    environment: development
+    environment: production
     outputs:
       backend_changed: ${{ steps.filter.outputs.backend }}
       frontend_changed: ${{ steps.filter.outputs.frontend }}
@@ -23,7 +23,6 @@ jobs:
       - name: 📂 Prepare naming
         id: prep
         run: |
-          # Формат: development-build-123-20240520
           echo "build_id=${{ vars.ENV_TAG }}-build-${{ github.run_number }}-$(date +%Y%m%d)" >> $GITHUB_OUTPUT
 
       - name: 📂 Path Filter
@@ -53,7 +52,7 @@ jobs:
     name: 🧪 Backend Tests
     needs: pre-check
     if: needs.pre-check.outputs.backend_changed == 'true' || needs.pre-check.outputs.run_e2e_forced == 'true'
-    environment: development
+    environment: production
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Checkout code
@@ -104,7 +103,7 @@ jobs:
     name: 🖼️ Frontend Tests
     needs: pre-check
     if: needs.pre-check.outputs.frontend_changed == 'true'
-    environment: development
+    environment: production
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Checkout code
@@ -137,12 +136,10 @@ jobs:
     needs: [pre-check, test-backend, test-frontend]
     if: |
       always() && needs.pre-check.result == 'success' && (
-        needs.pre-check.outputs.run_e2e_forced == 'true' || 
-        (needs.pre-check.outputs.run_e2e == 'true' && 
          !contains(needs.test-backend.result, 'failure') && 
-         !contains(needs.test-frontend.result, 'failure'))
+         !contains(needs.test-frontend.result, 'failure')
       )
-    environment: development
+    environment: production
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Checkout code
@@ -227,7 +224,7 @@ jobs:
     name: 📊 Deploy Report
     needs: [pre-check, allure-report]
     if: always() && needs.allure-report.result == 'success'
-    environment: development
+    environment: production
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Download Report Archive
@@ -276,8 +273,8 @@ jobs:
       always() && needs.pre-check.result == 'success' &&
       (needs.test-backend.result == 'success' || needs.test-backend.result == 'skipped') &&
       (needs.test-frontend.result == 'success' || needs.test-frontend.result == 'skipped') &&
-      (needs.e2e-tests.result == 'success' || needs.e2e-tests.result == 'skipped')
-    environment: development
+      (needs.e2e-tests.result == 'success')
+    environment: production
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Checkout code
@@ -297,7 +294,7 @@ jobs:
           push: true
           tags: |
             vladyslavdobrovolskyi/gis:frontend-${{ needs.pre-check.outputs.build_id }}
-            vladyslavdobrovolskyi/gis:frontend_development
+            vladyslavdobrovolskyi/gis:frontend_production
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
@@ -311,7 +308,7 @@ jobs:
           push: true
           tags: |
             vladyslavdobrovolskyi/gis:backend-${{ needs.pre-check.outputs.build_id }}
-            vladyslavdobrovolskyi/gis:backend_development
+            vladyslavdobrovolskyi/gis:backend_production
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -319,7 +316,7 @@ jobs:
     name: 🚚 Deploy Application
     needs: [pre-check, build]
     if: always() && needs.build.result == 'success'
-    environment: development
+    environment: production
     runs-on: ubuntu-latest
     steps:
       - name: 📡 SSH Update Tag & Restart
