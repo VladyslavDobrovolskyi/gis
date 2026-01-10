@@ -16,13 +16,18 @@
   "exports": {
     "./schemas": {
       "import": "./dist/schemas/index.js",
-      "types": "./src/schemas/index.ts",
+      "types": "./schemas/index.ts",
       "default": "./dist/schemas/index.js"
     },
     "./types": {
       "import": "./dist/types/index.js",
-      "types": "./src/types/index.ts",
+      "types": "./types/index.ts",
       "default": "./dist/types/index.js"
+    },
+    "./testing": {
+      "import": "./dist/testing/index.js",
+      "types": "./testing/index.ts",
+      "default": "./dist/testing/index.js"
     }
   },
   "dependencies": {
