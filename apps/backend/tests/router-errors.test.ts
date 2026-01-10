@@ -15,6 +15,10 @@ describe('Router Error Handling', () => {
     allure.severity('Critical');
   });
 
+  afterAll(async () => {
+    await dbRunner.shutdown();
+  });
+
   it('CitiesRouter: throws if city is not found', async () => {
     allure.epic('Cities');
 
