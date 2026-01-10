@@ -19,6 +19,6 @@
       "@docs/*": ["./docs/*"]
     }
   },
-  "include": ["src"],
+  "include": ["src", "tests", "db", "docs"],
   "exclude": ["node_modules", "dist"]
 }
