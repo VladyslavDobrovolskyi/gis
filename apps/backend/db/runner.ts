@@ -14,16 +14,18 @@ const pool = new Pool({
   // ssl: { rejectUnauthorized: false },
 });
 
-pool
-  .connect()
-  .then((client) => {
-    console.log('Connected to Database successfully!');
-    client.release();
-  })
-  .catch((err) => {
-    console.error('Failed to connect to Database', err);
-    process.exit(1);
-  });
+if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'production') {
+  pool
+    .connect()
+    .then((client) => {
+      console.log('Connected to Database successfully!');
+      client.release();
+    })
+    .catch((err) => {
+      console.error('Failed to connect to Database', err);
+      process.exit(1);
+    });
+}
 
 type DBExecutor = Pool | PoolClient;
 
