@@ -17,10 +17,10 @@
     "skipLibCheck": true,
     "paths": {
       "@/*": ["./*"],
-      "@schemas/*": ["./schemas/*"],
-      "@openapi/*": ["./openapi/*"],
-      "@types/*": ["./types/*"],
-      "@testing/*": ["./testing/*"]
+      "@/schemas/*": ["./schemas/*"],
+      "@/openapi/*": ["./openapi/*"],
+      "@/types/*": ["./types/*"],
+      "@/testing/*": ["./testing/*"]
     }
   },
   "include": ["./**/*", "./index.ts"],

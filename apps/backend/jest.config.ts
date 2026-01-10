@@ -19,6 +19,7 @@ const config: Config = {
       prefix: '<rootDir>/',
     }),
 
+    /* Refactor Later */
     '^@/(.*)$': '<rootDir>/src/$1',
     '^@db/(.*)$': '<rootDir>/db/$1',
     '^@queries/(.*)$': '<rootDir>/db/sql/$1',
@@ -29,6 +30,7 @@ const config: Config = {
     '^@gis/shared/schemas$': '<rootDir>/../../packages/shared/schemas/index.ts',
     '^@gis/shared/testing$': '<rootDir>/../../packages/shared/testing/index.ts',
     '^@gis/shared/(.*)$': '<rootDir>/../../packages/shared/$1',
+    '@/types': ['<rootDir>/../../packages/shared/types/index.ts'],
   },
 
   transformIgnorePatterns: ['node_modules/(?!(@gis/shared|@db)/)'],
