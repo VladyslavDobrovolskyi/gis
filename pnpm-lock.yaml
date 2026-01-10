@@ -69,6 +69,9 @@ importers:
       rimraf:
         specifier: ^6.1.2
         version: 6.1.2
+      ts-node:
+        specifier: ^10.9.2
+        version: 10.9.2(@types/node@25.0.3)(typescript@5.9.3)
       tsc-alias:
         specifier: ^1.8.16
         version: 1.8.16
@@ -232,6 +235,9 @@ importers:
       vue-leaflet:
         specifier: ^0.1.0
         version: 0.1.0
+      zod:
+        specifier: ^4.3.5
+        version: 4.3.5
     devDependencies:
       '@trpc/server':
         specifier: ^11.8.1
@@ -4729,6 +4735,9 @@ packages:
   zod@4.2.1:
     resolution: {integrity: sha512-0wZ1IRqGGhMP76gLqz8EyfBXKk0J2qo2+H3fi4mcUP/KtTocoX08nmIAHl1Z2kJIZbZee8KOpBCSNPRgauucjw==}
 
+  zod@4.3.5:
+    resolution: {integrity: sha512-k7Nwx6vuWx1IJ9Bjuf4Zt1PEllcwe7cls3VNzm4CQ1/hgtFUK2bRNG3rvnpPUhFjmqJKAKtjV576KnUkHocg/g==}
+
 snapshots:
 
   '@acemir/cssom@0.9.29': {}
@@ -4943,7 +4952,6 @@ snapshots:
   '@cspotcode/source-map-support@0.8.1':
     dependencies:
       '@jridgewell/trace-mapping': 0.3.9
-    optional: true
 
   '@csstools/color-helpers@5.1.0': {}
 
@@ -5391,7 +5399,6 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
-    optional: true
 
   '@modelcontextprotocol/sdk@1.25.1(hono@4.11.3)(zod@3.25.76)':
     dependencies:
@@ -5765,17 +5772,13 @@ snapshots:
     dependencies:
       typescript: 5.9.3
 
-  '@tsconfig/node10@1.0.12':
-    optional: true
+  '@tsconfig/node10@1.0.12': {}
 
-  '@tsconfig/node12@1.0.11':
-    optional: true
+  '@tsconfig/node12@1.0.11': {}
 
-  '@tsconfig/node14@1.0.3':
-    optional: true
+  '@tsconfig/node14@1.0.3': {}
 
-  '@tsconfig/node16@1.0.4':
-    optional: true
+  '@tsconfig/node16@1.0.4': {}
 
   '@turf/along@7.3.1':
     dependencies:
@@ -7382,7 +7385,6 @@ snapshots:
   acorn-walk@8.3.4:
     dependencies:
       acorn: 8.15.0
-    optional: true
 
   acorn@8.15.0: {}
 
@@ -7467,8 +7469,7 @@ snapshots:
       normalize-path: 3.0.0
       picomatch: 2.3.1
 
-  arg@4.1.3:
-    optional: true
+  arg@4.1.3: {}
 
   argparse@1.0.10:
     dependencies:
@@ -7751,8 +7752,7 @@ snapshots:
       object-assign: 4.1.1
       vary: 1.1.2
 
-  create-require@1.1.1:
-    optional: true
+  create-require@1.1.1: {}
 
   cross-env@10.1.0:
     dependencies:
@@ -7821,8 +7821,7 @@ snapshots:
 
   detect-newline@3.1.0: {}
 
-  diff@4.0.2:
-    optional: true
+  diff@4.0.2: {}
 
   dir-glob@3.0.1:
     dependencies:
@@ -9812,7 +9811,6 @@ snapshots:
       typescript: 5.9.3
       v8-compile-cache-lib: 3.0.1
       yn: 3.1.1
-    optional: true
 
   ts-parse-database-url@1.0.3:
     dependencies:
@@ -9913,8 +9911,7 @@ snapshots:
 
   util-deprecate@1.0.2: {}
 
-  v8-compile-cache-lib@3.0.1:
-    optional: true
+  v8-compile-cache-lib@3.0.1: {}
 
   v8-to-istanbul@9.3.0:
     dependencies:
@@ -10103,8 +10100,7 @@ snapshots:
       y18n: 5.0.8
       yargs-parser: 21.1.1
 
-  yn@3.1.1:
-    optional: true
+  yn@3.1.1: {}
 
   yocto-queue@0.1.0: {}
 
@@ -10119,3 +10115,5 @@ snapshots:
   zod@3.25.76: {}
 
   zod@4.2.1: {}
+
+  zod@4.3.5: {}
