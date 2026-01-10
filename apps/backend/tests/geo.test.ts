@@ -5,31 +5,7 @@ import { Region, Regions } from '@gis/shared/types';
 import { Country, Countries } from '@gis/shared/types';
 import { CitySchema, RegionSchema, CountrySchema } from '@gis/shared/schemas';
 import type { ZodSafeParseResult } from 'zod';
-
-const mockCity: City = {
-  ogc_fid: 1,
-  city_name: 'Test City',
-  region_id: 1,
-  geom: null,
-};
-const mockCountry: Country = {
-  ogc_fid: 1,
-  name: 'Test Country',
-  iso_code: 'TC',
-  shape_id: null,
-  group_code: null,
-  type: null,
-  geom: null,
-};
-const mockRegion: Region = {
-  ogc_fid: 1,
-  name: 'Test Region',
-  iso_code: 'TR',
-  shape_id: null,
-  group_code: null,
-  type: null,
-  geom: null,
-};
+import { mockCity, mockCountry, mockRegion } from '@gis/shared/testing';
 
 describe('Geodata: Cities', () => {
   beforeAll(() => {

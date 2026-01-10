@@ -27,6 +27,7 @@ const config: Config = {
     '^@trpc$': '<rootDir>/src/trpc',
 
     '^@gis/shared/schemas$': '<rootDir>/../../packages/shared/schemas/index.ts',
+    '^@gis/shared/testing$': '<rootDir>/../../packages/shared/testing/index.ts',
     '^@gis/shared/(.*)$': '<rootDir>/../../packages/shared/$1',
   },
 

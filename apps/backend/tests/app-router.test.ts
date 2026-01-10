@@ -21,19 +21,19 @@ describe('App Router', () => {
   it('Routers match exported objects', () => {
     allure.severity('Critical');
 
-    expect((appRouter.cities as any).getCities).toBeDefined();
-    expect((citiesRouter as any).getCities).toBeDefined();
-    expect((appRouter.cities as any).getCityById).toBeDefined();
-    expect((citiesRouter as any).getCityById).toBeDefined();
+    expect((appRouter.cities as typeof citiesRouter).getCities).toBeDefined();
+    expect((citiesRouter as typeof citiesRouter).getCities).toBeDefined();
+    expect((appRouter.cities as typeof citiesRouter).getCityById).toBeDefined();
+    expect((citiesRouter as typeof citiesRouter).getCityById).toBeDefined();
 
-    expect((appRouter.countries as any).getCountries).toBeDefined();
-    expect((countriesRouter as any).getCountries).toBeDefined();
-    expect((appRouter.countries as any).getCountryById).toBeDefined();
-    expect((countriesRouter as any).getCountryById).toBeDefined();
+    expect((appRouter.countries as typeof countriesRouter).getCountries).toBeDefined();
+    expect((countriesRouter as typeof countriesRouter).getCountries).toBeDefined();
+    expect((appRouter.countries as typeof countriesRouter).getCountryById).toBeDefined();
+    expect((countriesRouter as typeof countriesRouter).getCountryById).toBeDefined();
 
-    expect((appRouter.regions as any).getRegions).toBeDefined();
-    expect((regionsRouter as any).getRegions).toBeDefined();
-    expect((appRouter.regions as any).getRegionById).toBeDefined();
-    expect((regionsRouter as any).getRegionById).toBeDefined();
+    expect((appRouter.regions as typeof regionsRouter).getRegions).toBeDefined();
+    expect((regionsRouter as typeof regionsRouter).getRegions).toBeDefined();
+    expect((appRouter.regions as typeof regionsRouter).getRegionById).toBeDefined();
+    expect((regionsRouter as typeof regionsRouter).getRegionById).toBeDefined();
   });
 });

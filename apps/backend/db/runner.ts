@@ -55,9 +55,13 @@ export async function runOne<P, R>(
 
 export async function runRaw(
   sql: string,
-  params?: any[],
+  params?: unknown[],
   executor?: DBExecutor,
-): Promise<QueryResult<any>> {
+): Promise<QueryResult<Record<string, unknown>>> {
   const db = executor ?? pool;
-  return db.query(sql, params);
+  return db.query(sql, params as any);
+}
+
+export async function shutdown(): Promise<void> {
+  await pool.end();
 }

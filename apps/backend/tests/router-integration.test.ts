@@ -5,7 +5,11 @@ import { countriesRouter } from '@/routers/countries.router';
 import { regionsRouter } from '@/routers/regions.router';
 import * as dbRunner from '@db/runner';
 
-const createCaller = (router: any) => router.createCaller({});
+const createCaller = <T extends { createCaller: (ctx: object | (() => object)) => unknown }>(
+  router: T,
+): ReturnType<T['createCaller']> => {
+  return router.createCaller({} as object) as ReturnType<T['createCaller']>;
+};
 
 const callers = {
   Cities: createCaller(citiesRouter),
@@ -102,6 +106,10 @@ describe('Integration with runQuery', () => {
       const args = spy.mock.calls[0];
       expect(args[0]).toEqual(expect.any(Object));
       expect(args[1]).toBeUndefined();
+    });
+
+    afterAll(async () => {
+      await dbRunner.shutdown();
     });
 
     it('GetRegionById: calls runQuery with correct ogc_fid', async () => {
