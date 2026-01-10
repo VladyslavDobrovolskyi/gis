@@ -18,6 +18,11 @@
       "import": "./dist/schemas/index.js",
       "types": "./src/schemas/index.ts",
       "default": "./dist/schemas/index.js"
+    },
+    "./types": {
+      "import": "./dist/types/index.js",
+      "types": "./src/types/index.ts",
+      "default": "./dist/types/index.js"
     }
   },
   "dependencies": {
