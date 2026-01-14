@@ -10,28 +10,39 @@ const originalMsg = fs.readFileSync(msgFile, 'utf8').trim();
 const types = 'feat fix chore refactor docs test style perf build ci revert';
 const availableTypes = types.split(' ');
 
-const packageRegex = /@[a-zA-Z0-9_-]+(?<!e2e|e2ef)/i;
+const packageRegex = /^@([a-zA-Z0-9_-]+)\/[a-zA-Z0-9_-]+/i;
 const typeRegex = new RegExp(`\\b(${availableTypes.join('|')})\\b`, 'i');
 
 const packageMatch = originalMsg.match(packageRegex);
-const pkg = packageMatch ? packageMatch[0].toLowerCase() : null;
+let pkg = packageMatch ? packageMatch[0].toLowerCase() : null;
 
 const typeMatch = originalMsg.match(typeRegex);
 const type = typeMatch ? typeMatch[0].toLowerCase() : null;
 
-const hasE2EF = /@e2ef\b/i.test(originalMsg);
-const hasE2E = /@e2e\b/i.test(originalMsg);
+const hasE2EF = /\B@e2ef\b/i.test(originalMsg.replace(packageRegex, ''));
+const hasE2E = /\B@e2e\b/i.test(originalMsg.replace(packageRegex, ''));
+
+const pkgType = pkg ? pkg.split('/')[1] : null;
+
+let header;
+if (pkg && type && pkgType === type) {
+  header = pkg;
+} else if (pkg && type) {
+  header = `${pkg}/${type}`;
+} else {
+  header = null;
+}
 
 let cleanMsg = originalMsg
   .replace(packageRegex, '')
   .replace(typeRegex, '')
-  .replace(/@e2ef\b/i, '')
-  .replace(/@e2e\b/i, '')
+  .replace(/\B@e2ef\b/i, '')
+  .replace(/\B@e2e\b/i, '')
   .replace(/\s+/g, ' ')
   .replace(/^[^a-zA-Z0-9А-Яа-я]+/, '')
   .trim();
 
-if (pkg && type && cleanMsg) {
+if (header && cleanMsg) {
   cleanMsg = cleanMsg.toLowerCase();
   const capitalizedMsg = cleanMsg.charAt(0).toUpperCase() + cleanMsg.slice(1);
 
@@ -42,7 +53,7 @@ if (pkg && type && cleanMsg) {
     suffix = ' [E2E]';
   }
 
-  const finalMsg = `${pkg}/${type}: ${capitalizedMsg}${suffix}`;
+  const finalMsg = `${header}: ${capitalizedMsg}${suffix}`;
 
   fs.writeFileSync(msgFile, finalMsg);
 
