@@ -94,6 +94,31 @@ export default [
   },
 
   // -----------------------
+  // E2E tests (Playwright, TypeScript)
+  // -----------------------
+  {
+    files: ['e2e/**/*.{ts,js}'],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: {
+        ecmaVersion: 'latest',
+        sourceType: 'module',
+      },
+      globals: {
+        ...globals.browser,
+      },
+    },
+    plugins: {
+      '@typescript-eslint': tsEslint,
+    },
+    rules: {
+      ...tsEslint.configs.recommended.rules,
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+    },
+  },
+
+  // -----------------------
   // Prettier integration
   // -----------------------
   eslintConfigPrettier,
