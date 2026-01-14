@@ -1,23 +1,7 @@
 ---
 description: 'Testing mode for Playwright tests'
 tools:
-  [
-    'execute/testFailure',
-    'execute/getTerminalOutput',
-    'execute/runTask',
-    'execute/getTaskOutput',
-    'execute/createAndRunTask',
-    'execute/runInTerminal',
-    'execute/runTests',
-    'read/problems',
-    'read/readFile',
-    'read/terminalSelection',
-    'read/terminalLastCommand',
-    'edit/editFiles',
-    'search',
-    'web/fetch',
-    '@playwright/mcp/*',
-  ]
+  ['execute', 'read', 'edit', 'search', 'web/fetch', '@context7/mcp/*', '@playwright/mcp/*', 'todo']
 ---
 
 ## Core Responsibilities
