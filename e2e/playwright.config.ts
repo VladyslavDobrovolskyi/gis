@@ -12,6 +12,10 @@ import { defineConfig, devices } from '@playwright/test';
  * See https://playwright.dev/docs/test-configuration.
  */
 export default defineConfig({
+  // Global expect timeout (short base wait used across tests)
+  expect: { timeout: 5000 }, // 5s
+  // Keep test-level timeouts separate (test timeout remains default 30s)
+
   testDir: './.',
   /* Run tests in files in parallel */
   fullyParallel: true,
@@ -28,9 +32,9 @@ export default defineConfig({
       'allure-playwright',
       {
         outputFolder: 'allure-results',
-        // Эти настройки критичны для чистоты иерархии:
+        // These settings are important for a clean hierarchy:
         detail: true,
-        suiteTitle: false, // Отключает автоматическое создание Suite на основе имени файла
+        suiteTitle: false, // Disables automatic Suite creation based on the file name
       },
     ],
   ],
@@ -38,26 +42,36 @@ export default defineConfig({
   use: {
     /* Base URL to use in actions like `await page.goto('')`. */
     // baseURL: 'http://localhost:3000',
-    // Включаем трейсы и скриншоты при падении — Allure их автоматически подхватит
+    // Enable traces and screenshots on failure — Allure will pick them up automatically
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
+    // Slightly increased base interaction/navigation waits
+    actionTimeout: 5000,
+    navigationTimeout: 30000,
+  },
+
+  /* Run your local dev server before starting the tests */
+  webServer: {
+    command: 'cd .. && pnpm run dev',
+    url: 'http://localhost:5173/',
+    reuseExistingServer: true,
   },
 
   /* Configure projects for major browsers */
   projects: [
     {
-      name: 'Sample Desktop Chrome',
+      name: 'Chrome',
       use: { ...devices['Desktop Chrome'] },
     },
 
     {
-      name: 'Sample Desktop Firefox',
+      name: 'Firefox',
       use: { ...devices['Desktop Firefox'] },
     },
 
     {
-      name: 'Sample Desktop Safari',
+      name: 'Safari',
       use: { ...devices['Desktop Safari'] },
     },
 
