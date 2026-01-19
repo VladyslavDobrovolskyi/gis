@@ -55,7 +55,10 @@ export default defineConfig({
   webServer: {
     command: 'cd .. && pnpm run dev',
     url: 'http://localhost:5173/',
-    reuseExistingServer: true,
+    reuseExistingServer: !process.env.CI,
+    timeout: 180 * 1000,
+    stdout: 'pipe',
+    stderr: 'pipe',
   },
 
   /* Configure projects for major browsers */
