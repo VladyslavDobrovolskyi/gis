@@ -39,6 +39,18 @@
     "@qgis/mcp": {
       "command": "uv",
       "args": ["--directory", "C:\\Users\\Robot\\qgis-mcp", "run", "qgis_mcp_server.py"]
+    },
+    "@typst/mcp": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--with",
+        "git+https://github.com/FujishigeTemma/typst-mcp",
+        "typst-mcp",
+        "serve"
+      ],
+      "env": {}
     }
   }
 }
