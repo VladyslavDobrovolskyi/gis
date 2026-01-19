@@ -7,50 +7,90 @@ if (!msgFile) process.exit(0);
 
 const originalMsg = fs.readFileSync(msgFile, 'utf8').trim();
 
+// Allowed types
 const types = 'feat fix chore refactor docs test style perf build ci revert';
 const availableTypes = types.split(' ');
 
-const packageRegex = /^@([a-zA-Z0-9_-]+)\/[a-zA-Z0-9_-]+/i;
-const typeRegex = new RegExp(`\\b(${availableTypes.join('|')})\\b`, 'i');
-
+// 1. Parse Package (Example: @scope/pkg)
+const packageRegex = /^@([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_-]+)/i;
 const packageMatch = originalMsg.match(packageRegex);
-let pkg = packageMatch ? packageMatch[0].toLowerCase() : null;
 
-const typeMatch = originalMsg.match(typeRegex);
-const type = typeMatch ? typeMatch[0].toLowerCase() : null;
+let pkg = null;
+let pkgSuffix = null; // The part after slash
 
-const hasE2EF = /\B@e2ef\b/i.test(originalMsg.replace(packageRegex, ''));
-const hasE2E = /\B@e2e\b/i.test(originalMsg.replace(packageRegex, ''));
+if (packageMatch) {
+  pkg = packageMatch[0].toLowerCase(); // @docs/feat
+  pkgSuffix = packageMatch[2].toLowerCase(); // feat
+}
 
-const pkgType = pkg ? pkg.split('/')[1] : null;
+// 2. Determine Type (Strict Logic)
+let type = null;
+let typeFoundInHeader = false;
 
+// Priority A: Check if the package suffix itself is a valid type (e.g., @docs/feat)
+if (pkgSuffix && availableTypes.includes(pkgSuffix)) {
+  type = pkgSuffix;
+  typeFoundInHeader = true;
+}
+
+// Prepare the body for parsing (remove the package header)
+let rawBody = originalMsg.replace(packageRegex, '').trim();
+// Remove leading punctuation (colon, space) to find the next word cleanly
+let cleanBodyStart = rawBody.replace(/^[^a-zA-Z0-9А-Яа-я@]+/, '');
+
+// Priority B: If header didn't have a type, check the FIRST word of the message
+if (!type) {
+  // Regex looks for type ONLY at the start of the remaining string
+  const typeStartRegex = new RegExp(`^(${availableTypes.join('|')})\\b`, 'i');
+  const typeMatch = cleanBodyStart.match(typeStartRegex);
+
+  if (typeMatch) {
+    type = typeMatch[0].toLowerCase();
+    // Remove the type from the body since we found it there
+    cleanBodyStart = cleanBodyStart.replace(typeStartRegex, '').trim();
+  }
+}
+
+// 3. Parse Flags (Look in the remaining text)
+const hasE2EF = /\B@e2ef\b/i.test(originalMsg); // Search generally to be safe, or stick to rawBody
+const hasDocs = /\B@docs\b/i.test(originalMsg);
+const hasE2E = /\B@e2e\b/i.test(originalMsg);
+
+// 4. Construct Header
 let header;
-if (pkg && type && pkgType === type) {
-  header = pkg;
-} else if (pkg && type) {
-  header = `${pkg}/${type}`;
+if (pkg && type) {
+  if (typeFoundInHeader) {
+    // Case: @docs/feat -> Header: @docs/feat
+    header = pkg;
+  } else {
+    // Case: @package fix -> Header: @package/fix
+    header = `${pkg}/${type}`;
+  }
 } else {
   header = null;
 }
 
-let cleanMsg = originalMsg
-  .replace(packageRegex, '')
-  .replace(typeRegex, '')
-  .replace(/\B@e2ef\b/i, '')
-  .replace(/\B@e2e\b/i, '')
-  .replace(/\s+/g, ' ')
-  .replace(/^[^a-zA-Z0-9А-Яа-я]+/, '')
+// 5. Final Message Cleanup
+let finalBody = cleanBodyStart
+  .replace(/\B@docs\b/gi, '') // Remove @docs tag everywhere
+  .replace(/\B@e2ef\b/gi, '') // Remove @e2ef tag everywhere
+  .replace(/\B@e2e\b/gi, '') // Remove @e2e tag everywhere
+  .replace(/^[^a-zA-Z0-9А-Яа-я]+/, '') // Remove remaining punctuation at start (colon, etc)
+  .replace(/\s+/g, ' ') // Normalize spaces
   .trim();
 
-if (header && cleanMsg) {
-  cleanMsg = cleanMsg.toLowerCase();
-  const capitalizedMsg = cleanMsg.charAt(0).toUpperCase() + cleanMsg.slice(1);
+// 6. Generate Output
+if (header && finalBody) {
+  finalBody = finalBody.toLowerCase();
+  const capitalizedMsg = finalBody.charAt(0).toUpperCase() + finalBody.slice(1);
 
   let suffix = '';
   if (hasE2EF) {
     suffix = ' [E2EF]';
   } else if (hasE2E) {
     suffix = ' [E2E]';
+  } else if (hasDocs) {
+    suffix = ' [DOCS]';
   }
 
   const finalMsg = `${header}: ${capitalizedMsg}${suffix}`;
