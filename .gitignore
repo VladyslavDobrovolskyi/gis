@@ -41,7 +41,7 @@ logs/
 
 # Database data
 database/data/
-#Google Chrome 
+#Google Chrome
 chrome-profile
 
 #Reports
@@ -54,3 +54,6 @@ allure-results/
 apps/backend/allure-results/
 apps/frontend/allure-results/
 e2e/allure-results/
+
+# Docs
+docs/*.pdf
