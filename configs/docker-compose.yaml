@@ -1,0 +1,103 @@
+services:
+  proxy:
+    image: nginx:latest
+    container_name: main_proxy
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./.htpasswd:/etc/nginx/.htpasswd:ro
+      - ./reports:/var/www/reports:ro
+      - ./documentation:/var/www/documentation:ro
+    depends_on:
+      - frontend_development
+      - backend_development
+    networks:
+      - gis_development_network
+      - gis_production_network
+
+  frontend_development:
+    image: vladyslavdobrovolskyi/gis:frontend_development
+    container_name: frontend_development
+    networks:
+      - gis_development_network
+    depends_on:
+      - backend_development
+
+  backend_development:
+    image: vladyslavdobrovolskyi/gis:backend_development
+    container_name: backend_development
+    environment:
+      DATABASE_URL: ${DEV_DATABASE_URL}
+      FRONTEND_URL: ${DEV_FRONTEND_URL}
+      API_URL: ${DEV_API_URL}
+      API_PORT: ${DEV_API_PORT}
+      SWAGGER_API_URL: ${DEV_SWAGGER_API_URL}
+      SWAGGER_API_TITLE: ${DEV_SWAGGER_API_TITLE}
+      SWAGGER_API_VERSION: ${DEV_SWAGGER_API_VERSION}
+    networks:
+      - gis_development_network
+    depends_on:
+      - database_development
+
+  frontend_production:
+    image: vladyslavdobrovolskyi/gis:frontend-${APP_TAG:-production}
+    container_name: frontend_production
+    networks:
+      - gis_production_network
+    depends_on:
+      - backend_production
+
+  backend_production:
+    image: vladyslavdobrovolskyi/gis:backend_production
+    container_name: backend_production
+    environment:
+      DATABASE_URL: ${PROD_DATABASE_URL}
+      FRONTEND_URL: ${PROD_FRONTEND_URL}
+      API_URL: ${PROD_API_URL}
+      API_PORT: ${PROD_API_PORT}
+      SWAGGER_API_URL: ${PROD_SWAGGER_API_URL}
+      SWAGGER_API_TITLE: ${PROD_SWAGGER_API_TITLE}
+      SWAGGER_API_VERSION: ${PROD_SWAGGER_API_VERSION}
+    networks:
+      - gis_production_network
+    depends_on:
+      - database_production
+
+  database_development:
+    image: postgis/postgis:18-3.6
+    container_name: database_development
+    environment:
+      POSTGRES_USER: ${DEV_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${DEV_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${DEV_POSTGRES_DB}
+    ports:
+      - '5437:5432'
+    volumes:
+      - ./databases/development/data:/var/lib/postgresql
+      - ./databases/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - gis_development_network
+
+  database_production:
+    image: postgis/postgis:18-3.6
+    container_name: database_production
+    environment:
+      POSTGRES_USER: ${PROD_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${PROD_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${PROD_POSTGRES_DB}
+    ports:
+      - '5438:5432'
+    volumes:
+      - ./databases/production/data:/var/lib/postgresql
+      - ./databases/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - gis_production_network
+
+networks:
+  gis_development_network:
+    driver: bridge
+  gis_production_network:
+    driver: bridge
