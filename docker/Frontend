@@ -10,8 +10,11 @@ RUN pnpm install --frozen-lockfile --ignore-scripts --shamefully-hoist
 
 ARG VITE_API_URL
 ARG VITE_FOOTER_LABEL
+ARG VITE_INTERNAL_EXPOSE
+
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_FOOTER_LABEL=$VITE_FOOTER_LABEL
+ENV VITE_INTERNAL_EXPOSE=${VITE_INTERNAL_EXPOSE}
 
 RUN pnpm --filter @gis/shared build
 RUN pnpm --filter @gis/frontend build
