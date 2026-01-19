@@ -310,8 +310,9 @@ const initMap = useDebounceFn(async (): Promise<void> => {
       leafletMap.addLayer(drawnItems);
     } catch {}
 
+    console.log(import.meta.env.VITE_INTERNAL_EXPOSE);
     /* Expose objects on window for e2e tests — only in non-production environments */
-    if (import.meta.env.DEV) {
+    if (import.meta.env.VITE_INTERNAL_EXPOSE) {
       /* Expose the map reference */
       window.__MAP__ = leafletMap;
 
