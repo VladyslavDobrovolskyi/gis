@@ -303,6 +303,7 @@ jobs:
           build-args: |
             VITE_API_URL=${{ vars.VITE_API_URL }}
             VITE_FOOTER_LABEL=${{ vars.VITE_FOOTER_LABEL }} (${{ needs.pre-check.outputs.build_id }})
+            VITE_INTERNAL_EXPOSE=${{ vars.VITE_INTERNAL_EXPOSE }}
       - name: 🧠 Build & Push Backend
         uses: docker/build-push-action@v5
         with:
