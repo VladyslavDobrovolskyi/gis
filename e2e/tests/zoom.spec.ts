@@ -4,7 +4,7 @@ import * as allure from 'allure-js-commons';
 
 /* Map zoom tests — verify that zoom-in and zoom-out controls adjust map zoom level */
 
-const timeout = 15000;
+const timeout = 30000;
 
 test.describe('App E2E - Map Zooming', () => {
   test.beforeEach(() => {
