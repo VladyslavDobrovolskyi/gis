@@ -43,11 +43,11 @@ test.describe('App E2E - Map Zooming', () => {
       await main.clickZoomIn();
       await page.waitForFunction(
         (z: number) => {
-          const m = (window as Window).__MAP__;
+          const m = (window as any).__MAP__;
           return !!(m && typeof m.getZoom === 'function' && m.getZoom() > z);
         },
         initialZoom,
-        { timeout },
+        { timeout, polling: 500 },
       );
 
       const afterZoom = await page.evaluate<number | null>(() => {
@@ -68,11 +68,11 @@ test.describe('App E2E - Map Zooming', () => {
       await main.clickZoomOut();
       await page.waitForFunction(
         (z: number) => {
-          const m = (window as Window).__MAP__;
+          const m = (window as any).__MAP__;
           return !!(m && typeof m.getZoom === 'function' && m.getZoom() < z);
         },
         beforeOutZoom,
-        { timeout },
+        { timeout, polling: 500 },
       );
 
       const finalZoom = await page.evaluate<number | null>(() => {
