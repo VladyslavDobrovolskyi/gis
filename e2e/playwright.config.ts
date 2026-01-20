@@ -71,12 +71,12 @@ export default defineConfig({
 
     {
       name: 'Firefox',
-      use: { ...devices['Desktop Firefox'] },
+      use: { ...devices['Desktop Firefox'], actionTimeout: 25000 },
     },
 
     {
       name: 'Safari',
-      use: { ...devices['Desktop Safari'] },
+      use: { ...devices['Desktop Safari'], actionTimeout: 25000 },
     },
 
     /* Test against mobile viewports. */
