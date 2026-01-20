@@ -137,9 +137,9 @@ jobs:
     needs: [pre-check, test-backend, test-frontend]
     if: |
       always() && needs.pre-check.result == 'success' && (
-        needs.pre-check.outputs.run_e2e_forced == 'true' || 
-        (needs.pre-check.outputs.run_e2e == 'true' && 
-         !contains(needs.test-backend.result, 'failure') && 
+        needs.pre-check.outputs.run_e2e_forced == 'true' ||
+        (needs.pre-check.outputs.run_e2e == 'true' &&
+         !contains(needs.test-backend.result, 'failure') &&
          !contains(needs.test-frontend.result, 'failure'))
       )
     environment: development
@@ -158,19 +158,25 @@ jobs:
         with:
           node-version: 24
           cache: 'pnpm'
+      - name: 🧾 Create environment files
+        run: |
+          mkdir -p apps/backend apps/frontend
 
+          cat <<'EOF' > apps/backend/.env.development
+          ${{ secrets.DEV_ENV_BACKEND }}
+          EOF
+
+          cat <<'EOF' > apps/frontend/.env.development
+          ${{ secrets.DEV_ENV_FRONTEND }}
+          EOF
       - name: 🛠️ Install dependencies
         run: pnpm install --frozen-lockfile
-
       - name: 🌐 Install Playwright Browsers
         run: pnpm e2e:install-browsers
-
       - name: 🏗️ Build shared packages
         run: pnpm shared:build
-
       - name: 🗄️ Start database
         run: docker compose up -d database
-
       - name: ⏳ Wait for DB
         run: |
           for i in {1..30}; do
