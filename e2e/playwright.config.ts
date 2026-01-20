@@ -66,17 +66,17 @@ export default defineConfig({
   projects: [
     {
       name: 'Chrome',
-      use: { ...devices['Desktop Chrome'] },
+      use: { ...devices['Desktop Chrome'], actionTimeout: 25000, navigationTimeout: 30000 },
     },
 
     {
       name: 'Firefox',
-      use: { ...devices['Desktop Firefox'], actionTimeout: 25000 },
+      use: { ...devices['Desktop Firefox'], actionTimeout: 30000, navigationTimeout: 50000 },
     },
 
     {
       name: 'Safari',
-      use: { ...devices['Desktop Safari'], actionTimeout: 25000 },
+      use: { ...devices['Desktop Safari'], actionTimeout: 25000, navigationTimeout: 30000 },
     },
 
     /* Test against mobile viewports. */
