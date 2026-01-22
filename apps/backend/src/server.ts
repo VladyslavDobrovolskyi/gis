@@ -5,6 +5,9 @@ import { createOpenApiExpressMiddleware } from 'trpc-to-openapi';
 import { setupSwagger } from '@docs/swagger';
 import { appRouter } from './_router';
 
+import env from 'dotenv-flow';
+env.config();
+
 const app = express();
 
 app.use(cors({ origin: process.env.FRONTEND_URL }));
@@ -19,7 +22,7 @@ app.use(
 );
 
 app.use(
-  '/',
+  '/api',
   createOpenApiExpressMiddleware({
     router: appRouter,
   }),

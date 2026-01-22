@@ -1,21 +1,16 @@
 import { router, publicProcedure } from '../trpc';
-import {
-  CitiesSchema,
-  GetDistanceFromToParamsSchema,
-  GetDistanceFromToResultSchema,
-} from '@gis/shared/schemas';
-
-import { getAllCities } from '@generated/cities.types';
-import { getDistanceFromTo } from '@generated/distance.types';
-import { runQuery, runOne } from '@db/runner';
+import { CitiesSchema, CitySchema } from '@gis/shared/schemas';
+import { getAllCities, getCityById } from '@db/generated/cities.types';
+import { runQuery } from '@db/runner';
 
 export const citiesRouter = router({
-  getAll: publicProcedure
+  getCities: publicProcedure
     .meta({
       openapi: {
         method: 'GET',
-        path: '/',
-        summary: 'Get all cities',
+        path: '/cities',
+        summary: 'Get all cities with geometry',
+        description: 'Returns a list of cities with geometry (GeoJSON)',
       },
     })
     .output(CitiesSchema)
@@ -23,23 +18,20 @@ export const citiesRouter = router({
       const result = await runQuery(getAllCities);
       return CitiesSchema.parse(result);
     }),
-
-  distance: publicProcedure
+  getCityById: publicProcedure
+    .input(CitySchema.pick({ ogc_fid: true }))
     .meta({
       openapi: {
         method: 'GET',
-        path: '/distance',
-        summary: 'Get distance between two cities',
+        path: '/cities/{ogc_fid}',
+        summary: 'Get city by ogc_fid',
+        description: 'Returns a city by ogc_fid',
       },
     })
-    .input(GetDistanceFromToParamsSchema)
-    .output(GetDistanceFromToResultSchema)
+    .output(CitySchema)
     .query(async ({ input }) => {
-      const result = await runOne(getDistanceFromTo, {
-        from: input.from,
-        to: input.to,
-      });
-
-      return GetDistanceFromToResultSchema.parse(result);
+      const result = await runQuery(getCityById, { ogc_fid: input.ogc_fid });
+      if (!result.length) throw new Error('City not found');
+      return CitySchema.parse(result[0]);
     }),
 });

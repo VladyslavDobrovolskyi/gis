@@ -1,14 +1,15 @@
-import { createApp } from 'vue';
 import App from './App.vue';
+import { createApp } from 'vue';
+import { createPinia as PiniaStorePlugin } from 'pinia';
+import { VueQueryPlugin } from '@tanstack/vue-query';
 
-import 'leaflet/dist/leaflet.css';
-import L from 'leaflet';
-import icon from 'leaflet/dist/images/marker-icon.png';
-import iconShadow from 'leaflet/dist/images/marker-shadow.png';
+import '@/styles/map.styles.css';
+import '@/styles/tailwind.css';
+import '@/styles/leaflet.css';
 
-L.Icon.Default.mergeOptions({
-  iconUrl: icon,
-  shadowUrl: iconShadow,
-});
+const app = createApp(App);
 
-createApp(App).mount('#app');
+app.use(VueQueryPlugin);
+app.use(PiniaStorePlugin());
+
+app.mount('#app');

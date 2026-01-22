@@ -16,8 +16,11 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "paths": {
-      "@schemas/*": ["./schemas/*"],
-      "@openapi/*": ["./openapi/*"]
+      "@/*": ["./*"],
+      "@/schemas/*": ["./schemas/*"],
+      "@/openapi/*": ["./openapi/*"],
+      "@/types/*": ["./types/*"],
+      "@/testing/*": ["./testing/*"]
     }
   },
   "include": ["./**/*", "./index.ts"],

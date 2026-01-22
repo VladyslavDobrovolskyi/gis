@@ -1,0 +1,52 @@
+import { defineStore } from 'pinia';
+import { useStorage } from '@vueuse/core';
+import { ref } from 'vue';
+
+export const useMapStore = defineStore('map', () => {
+  // persisted map view (lat, lng order)
+  const center = useStorage('map:center', [50.45, 30.52] as [number, number]);
+  const zoom = useStorage('map:zoom', 6);
+
+  // persisted measurement state
+  const measurementMode = useStorage<'distance' | 'area' | null>('map:measurementMode', null);
+  const measurementText = useStorage<string>('map:measurementText', '');
+
+  // persisted drawn GeoJSON features (FeatureCollection)
+  const drawn = useStorage<GeoJSON.FeatureCollection | null>('map:drawn', null);
+
+  // persist active Geoman tool (e.g., 'Rectangle', 'Polygon') and global edit toggle
+  const activeTool = useStorage<string | null>('map:activeTool', null);
+  const globalEdit = useStorage<boolean>('map:globalEdit', false);
+
+  // UI state (non-persistent): inline delete bubble state used by the map UI
+  const deleteBubble = ref<{
+    visible: boolean;
+    x: number;
+    y: number;
+    clientX?: number | null;
+    clientY?: number | null;
+    layer: unknown | null;
+    isGroup: boolean;
+    fading?: boolean;
+  }>({
+    visible: false,
+    x: 0,
+    y: 0,
+    clientX: null,
+    clientY: null,
+    layer: null,
+    isGroup: false,
+    fading: false,
+  });
+
+  return {
+    center,
+    zoom,
+    measurementMode,
+    measurementText,
+    drawn,
+    activeTool,
+    globalEdit,
+    deleteBubble,
+  };
+});

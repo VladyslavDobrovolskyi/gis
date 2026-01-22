@@ -4,7 +4,6 @@ import tsEslint from '@typescript-eslint/eslint-plugin';
 import tsParser from '@typescript-eslint/parser';
 import vueParser from 'vue-eslint-parser';
 import eslintConfigPrettier from 'eslint-config-prettier';
-import pluginZodOpenApi from 'eslint-plugin-zod-openapi';
 
 export default [
   // -----------------------
@@ -84,7 +83,6 @@ export default [
     },
     plugins: {
       '@typescript-eslint': tsEslint,
-      'eslint-plugin-zod-openapi': pluginZodOpenApi,
     },
     rules: {
       ...tsEslint.configs.recommended.rules,
@@ -92,6 +90,31 @@ export default [
       // практичные послабления для shared
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
       '@typescript-eslint/no-explicit-any': 'off',
+    },
+  },
+
+  // -----------------------
+  // E2E tests (Playwright, TypeScript)
+  // -----------------------
+  {
+    files: ['e2e/**/*.{ts,js}'],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: {
+        ecmaVersion: 'latest',
+        sourceType: 'module',
+      },
+      globals: {
+        ...globals.browser,
+      },
+    },
+    plugins: {
+      '@typescript-eslint': tsEslint,
+    },
+    rules: {
+      ...tsEslint.configs.recommended.rules,
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
     },
   },
 

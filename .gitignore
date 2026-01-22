@@ -21,6 +21,7 @@ playwright-report
 blob-report
 .cache
 .auth
+.playwright-mcp
 
 # TypeScript
 *.tsbuildinfo
@@ -34,7 +35,25 @@ logs/
 
 # Environment variables
 .env
+.env.development
+.env.production
 .env.*.local
 
 # Database data
 database/data/
+#Google Chrome
+chrome-profile
+
+#Reports
+allure
+apps/backend/allure
+apps/frontend/allure
+e2e/allure
+allure-report/
+allure-results/
+apps/backend/allure-results/
+apps/frontend/allure-results/
+e2e/allure-results/
+
+# Docs
+docs/*.pdf

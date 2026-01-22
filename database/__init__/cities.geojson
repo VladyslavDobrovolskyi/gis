@@ -1,0 +1,140 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Kyiv", "region_id": 26 },
+      "geometry": { "type": "Point", "coordinates": [30.5234, 50.4501] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Vinnytsia", "region_id": 20 },
+      "geometry": { "type": "Point", "coordinates": [28.48097, 49.23278] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Lutsk", "region_id": 2 },
+      "geometry": { "type": "Point", "coordinates": [25.32415, 50.74723] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Dnipro", "region_id": 24 },
+      "geometry": { "type": "Point", "coordinates": [35.04598, 48.46472] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Donetsk", "region_id": 10 },
+      "geometry": { "type": "Point", "coordinates": [37.80285, 48.01588] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Zhytomyr", "region_id": 4 },
+      "geometry": { "type": "Point", "coordinates": [28.67669, 50.25465] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Uzhhorod", "region_id": 14 },
+      "geometry": { "type": "Point", "coordinates": [22.30044, 48.6208] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Zaporizhzhia", "region_id": 11 },
+      "geometry": { "type": "Point", "coordinates": [35.13957, 47.8388] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Ivano-Frankivsk", "region_id": 13 },
+      "geometry": { "type": "Point", "coordinates": [24.70972, 48.92263] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Kropyvnytskyi", "region_id": 25 },
+      "geometry": { "type": "Point", "coordinates": [32.26153, 48.50765] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Luhansk", "region_id": 9 },
+      "geometry": { "type": "Point", "coordinates": [39.30778, 48.56705] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Lviv", "region_id": 12 },
+      "geometry": { "type": "Point", "coordinates": [24.03111, 49.84296] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Mykolaiv", "region_id": 18 },
+      "geometry": { "type": "Point", "coordinates": [32.00068, 46.97503] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Odesa", "region_id": 17 },
+      "geometry": { "type": "Point", "coordinates": [30.73262, 46.47747] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Poltava", "region_id": 23 },
+      "geometry": { "type": "Point", "coordinates": [34.55222, 49.58974] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Rivne", "region_id": 3 },
+      "geometry": { "type": "Point", "coordinates": [26.25162, 50.6199] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Sumy", "region_id": 7 },
+      "geometry": { "type": "Point", "coordinates": [34.79981, 50.9077] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Ternopil", "region_id": 15 },
+      "geometry": { "type": "Point", "coordinates": [25.593, 49.55352] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Kharkiv", "region_id": 8 },
+      "geometry": { "type": "Point", "coordinates": [36.23038, 49.9935] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Kherson", "region_id": 1 },
+      "geometry": { "type": "Point", "coordinates": [32.6178, 46.63542] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Khmelnytskyi", "region_id": 21 },
+      "geometry": { "type": "Point", "coordinates": [26.97714, 49.42161] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Cherkasy", "region_id": 22 },
+      "geometry": { "type": "Point", "coordinates": [32.06207, 49.44443] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Chernivtsi", "region_id": 16 },
+      "geometry": { "type": "Point", "coordinates": [25.94034, 48.29149] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Chernihiv", "region_id": 6 },
+      "geometry": { "type": "Point", "coordinates": [31.28487, 51.4982] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Sevastopol", "region_id": 27 },
+      "geometry": { "type": "Point", "coordinates": [33.5224, 44.61665] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Simferopol", "region_id": 19 },
+      "geometry": { "type": "Point", "coordinates": [34.1083, 44.95719] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "city_name": "Kramatorsk", "region_id": 10 },
+      "geometry": { "type": "Point", "coordinates": [37.53076, 48.72305] }
+    }
+  ]
+}

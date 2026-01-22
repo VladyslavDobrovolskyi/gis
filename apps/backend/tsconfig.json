@@ -16,9 +16,10 @@
       "@db/*": ["./db/*"],
       "@queries/*": ["./db/sql/*"],
       "@generated/*": ["./db/generated/*"],
-      "@docs/*": ["./docs/*"]
+      "@docs/*": ["./docs/*"],
+      "@/types": ["../../packages/shared/types/index.ts"]
     }
   },
-  "include": ["src"],
+  "include": ["src", "tests", "db", "docs"],
   "exclude": ["node_modules", "dist"]
 }

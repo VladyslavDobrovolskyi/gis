@@ -1,9 +1,9 @@
 /* GPT generated */
 import { Pool, PoolClient, QueryResult } from 'pg';
 import type { PreparedQuery } from '@pgtyped/runtime';
-import * as dotenv from 'dotenv';
+import * as env from 'dotenv-flow';
 
-dotenv.config();
+env.config();
 
 if (!process.env.DATABASE_URL) {
   throw new Error('DATABASE_URL is not set in environment variables');
@@ -14,16 +14,18 @@ const pool = new Pool({
   // ssl: { rejectUnauthorized: false },
 });
 
-pool
-  .connect()
-  .then((client) => {
-    console.log('Connected to Database successfully!');
-    client.release();
-  })
-  .catch((err) => {
-    console.error('Failed to connect to Database', err);
-    process.exit(1);
-  });
+if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'production') {
+  pool
+    .connect()
+    .then((client) => {
+      console.log('Connected to Database successfully!');
+      client.release();
+    })
+    .catch((err) => {
+      console.error('Failed to connect to Database', err);
+      process.exit(1);
+    });
+}
 
 type DBExecutor = Pool | PoolClient;
 
@@ -53,9 +55,13 @@ export async function runOne<P, R>(
 
 export async function runRaw(
   sql: string,
-  params?: any[],
+  params?: unknown[],
   executor?: DBExecutor,
-): Promise<QueryResult<any>> {
+): Promise<QueryResult<Record<string, unknown>>> {
   const db = executor ?? pool;
-  return db.query(sql, params);
+  return db.query(sql, params as any);
+}
+
+export async function shutdown(): Promise<void> {
+  await pool.end();
 }
