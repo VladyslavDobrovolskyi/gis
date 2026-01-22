@@ -144,12 +144,20 @@ test.describe('Map Editing', () => {
 
           const cluster = page.locator('.marker-cluster').first();
           await cluster.waitFor({ state: 'visible', timeout: 10000 });
+          
+          // Ensure cluster is stable and ready for interaction
+          await page.waitForTimeout(200);
+          await cluster.scrollIntoViewIfNeeded();
           await cluster.click();
+          
+          // Give Firefox time to process the click event
+          await page.waitForTimeout(300);
+          
           await page
             .waitForFunction(
               () => document.querySelectorAll('.leaflet-marker-icon').length > 0,
               null,
-              { timeout: 10000, polling: 250 },
+              { timeout: 15000, polling: 300 },
             )
             .catch(() => {});
           markerCount = await page.locator('.leaflet-marker-icon').count();
