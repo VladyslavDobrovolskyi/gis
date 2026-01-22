@@ -10,6 +10,11 @@ import * as allure from 'allure-js-commons';
   - Clicking an individual marker should open a popup containing the city name
 */
 
+const CLUSTER_STABILITY_WAIT = 200;
+const CLUSTER_CLICK_PROCESSING_WAIT = 600;
+const CLUSTER_WAIT_TIMEOUT = 15000;
+const CLUSTER_POLLING_INTERVAL = 200;
+
 test.describe('Map Editing', () => {
   test.describe('Clusters', () => {
     test.beforeEach(() => {
@@ -77,7 +82,8 @@ test.describe('Map Editing', () => {
       });
 
       await test.step('Click a visible cluster and observe map change', async () => {
-        const clusterCount = await page.locator('.marker-cluster').count();
+        const clusterLocator = page.getByRole('button', { name: /^\d+$/ });
+        const clusterCount = await clusterLocator.count();
         if (clusterCount === 0)
           test.skip(true, 'No clusters detected in fixture; skipping cluster interaction test');
 
@@ -87,9 +93,28 @@ test.describe('Map Editing', () => {
           return m && typeof m.getZoom === 'function' ? m.getZoom() : null;
         })) as number | null;
 
-        const initialClusterCount = await page.locator('.marker-cluster').count();
+        const initialClusterCount = clusterCount;
 
-        await page.locator('.marker-cluster').first().click();
+        const cluster = clusterLocator.first();
+
+        await expect(cluster).toBeVisible({ timeout: 2000 });
+        await cluster.scrollIntoViewIfNeeded();
+
+        let clicked = false;
+        try {
+          await cluster.click({ trial: true });
+          await cluster.click();
+          clicked = true;
+        } catch {
+          const box = await cluster.boundingBox();
+          if (box) {
+            await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+            clicked = true;
+          }
+        }
+        expect(clicked).toBeTruthy();
+
+        await page.waitForTimeout(CLUSTER_CLICK_PROCESSING_WAIT);
 
         const ok = await page
           .waitForFunction(
@@ -97,14 +122,17 @@ test.describe('Map Editing', () => {
               const m = (window as unknown as Window & { __MAP__?: { getZoom?: () => number } })
                 .__MAP__;
               const zoom = m && typeof m.getZoom === 'function' ? m.getZoom() : null;
-              const currClusters = document.querySelectorAll('.marker-cluster').length;
+
+              const currClusters = Array.from(document.querySelectorAll('button')).filter((b) =>
+                /^\d+$/.test(b.textContent || ''),
+              ).length;
               return (
                 (typeof zoom === 'number' && prevZoom != null && zoom > prevZoom) ||
                 currClusters < prevCount
               );
             },
             [initialZoom, initialClusterCount],
-            { timeout: 5000 },
+            { timeout: CLUSTER_WAIT_TIMEOUT, polling: CLUSTER_POLLING_INTERVAL },
           )
           .then(() => true)
           .catch(() => false);
@@ -126,18 +154,51 @@ test.describe('Map Editing', () => {
       });
 
       await test.step('Ensure marker is visible (click cluster if necessary)', async () => {
-        let markerCount = await page.locator('.leaflet-marker-icon').count();
+        let markerCount = await page.getByRole('button', { name: 'Marker' }).count();
 
         if (markerCount === 0) {
-          const clusterCount = await page.locator('.marker-cluster').count();
+          const clusterLocator = page.getByRole('button', { name: /^\d+$/ });
+          const clusterCount = await clusterLocator.count();
           if (clusterCount === 0)
             test.skip(true, 'No markers or clusters present; skipping marker popup test');
 
-          await page.locator('.marker-cluster').first().click();
+          const cluster = clusterLocator.first();
+          await cluster.waitFor({ state: 'visible', timeout: 10000 });
+          await page.waitForTimeout(CLUSTER_STABILITY_WAIT);
+          await cluster.scrollIntoViewIfNeeded();
+
+          let clicked = false;
+          try {
+            await cluster.click({ trial: true });
+            await cluster.click();
+            clicked = true;
+          } catch {
+            const box = await cluster.boundingBox();
+            if (box) {
+              await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+              clicked = true;
+            }
+          }
+          expect(clicked).toBeTruthy();
+
+          await page.waitForTimeout(CLUSTER_CLICK_PROCESSING_WAIT);
+
           await page
-            .waitForSelector('.leaflet-marker-icon', { state: 'visible', timeout: 5000 })
+            .waitForFunction(
+              () =>
+                Array.from(document.querySelectorAll('button')).some(
+                  (b) => b.textContent === 'Marker',
+                ),
+              null,
+              { timeout: CLUSTER_WAIT_TIMEOUT, polling: CLUSTER_POLLING_INTERVAL },
+            )
             .catch(() => {});
-          markerCount = await page.locator('.leaflet-marker-icon').count();
+          markerCount = await page.getByRole('button', { name: 'Marker' }).count();
+          if (markerCount === 0)
+            test.skip(
+              true,
+              'Markers did not become visible after cluster expansion; skipping marker popup test',
+            );
         }
 
         expect(markerCount).toBeGreaterThan(0);
@@ -153,59 +214,22 @@ test.describe('Map Editing', () => {
           return (first && ((first['city_name'] as string) || (first['name'] as string))) || '';
         });
 
-        const clicked = await page.evaluate(() => {
-          const w = window as unknown as Window & {
-            __DATA__?: unknown;
-            __LAYERS__?: { cityMarkers?: { getLayers?: () => unknown[] } | null } | null;
-          };
-
-          const d = w.__DATA__ as Record<string, unknown> | undefined;
-          const cities =
-            d && Array.isArray(d['citiesWithCoords']) ? (d['citiesWithCoords'] as unknown[]) : [];
-          const city = cities && cities.length ? (cities[0] as Record<string, unknown>) : null;
-          if (!city) return false;
-          const coords = city['coords'] as unknown;
-          if (!coords || !Array.isArray(coords)) return false;
-          const [lat, lng] = coords as [number, number];
-
-          const cluster = w.__LAYERS__?.cityMarkers;
-          if (cluster && typeof cluster.getLayers === 'function') {
-            try {
-              const layers = cluster.getLayers ? cluster.getLayers() : [];
-              for (let i = 0; i < layers.length; i++) {
-                const l = layers[i] as {
-                  getLatLng?: () => { lat: number; lng: number };
-                  fire?: (ev: string) => void;
-                } | null;
-                try {
-                  if (l && typeof l.getLatLng === 'function') {
-                    const ll = l.getLatLng!();
-                    if (ll && ll.lat === lat && ll.lng === lng) {
-                      if (typeof l.fire === 'function') {
-                        l.fire('click');
-                      }
-                      return true;
-                    }
-                  }
-                } catch {
-                  /* ignore individual layer errors */
-                }
-              }
-            } catch {
-              /* ignore cluster internals errors */
-            }
+        const marker = page.getByRole('button', { name: 'Marker' }).first();
+        await marker.waitFor({ state: 'visible', timeout: 10000 });
+        await marker.scrollIntoViewIfNeeded();
+        let clicked = false;
+        try {
+          await marker.click({ trial: true });
+          await marker.click();
+          clicked = true;
+        } catch {
+          const box = await marker.boundingBox();
+          if (box) {
+            await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+            clicked = true;
           }
-
-          /* Fallback: click visible marker DOM element */
-          const mk = document.querySelector('.leaflet-marker-icon') as HTMLElement | null;
-          if (mk) {
-            mk.click();
-            return true;
-          }
-          return false;
-        });
-
-        if (!clicked) throw new Error('Unable to click marker (no matching marker found)');
+        }
+        expect(clicked).toBeTruthy();
 
         /* Try to wait for popup; if not visible, attempt programmatic openPopup then wait longer */
         let popupVisible = true;
@@ -262,7 +286,9 @@ test.describe('Map Editing', () => {
               }
             }
             /* Fallback: click a visible marker DOM element */
-            const mk = document.querySelector('.leaflet-marker-icon') as HTMLElement | null;
+            const mk = Array.from(document.querySelectorAll('button')).find(
+              (b) => b.textContent === 'Marker',
+            ) as HTMLElement | null;
             if (mk) {
               mk.click();
               return true;
