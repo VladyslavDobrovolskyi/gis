@@ -10,6 +10,12 @@ import * as allure from 'allure-js-commons';
   - Clicking an individual marker should open a popup containing the city name
 */
 
+// Timing constants for cluster interactions (especially important for Firefox)
+const CLUSTER_STABILITY_WAIT = 200; // Wait before clicking to ensure cluster is stable
+const CLUSTER_CLICK_PROCESSING_WAIT = 300; // Wait after clicking for event processing
+const CLUSTER_WAIT_TIMEOUT = 15000; // Timeout for waiting on cluster state changes
+const CLUSTER_POLLING_INTERVAL = 300; // Polling interval for checking cluster state
+
 test.describe('Map Editing', () => {
   test.describe('Clusters', () => {
     test.beforeEach(() => {
@@ -91,7 +97,14 @@ test.describe('Map Editing', () => {
 
         const cluster = page.locator('.marker-cluster').first();
         await cluster.waitFor({ state: 'visible', timeout: 10000 });
+
+        // Ensure cluster is stable and ready for interaction
+        await page.waitForTimeout(CLUSTER_STABILITY_WAIT);
+        await cluster.scrollIntoViewIfNeeded();
         await cluster.click();
+
+        // Give Firefox time to process the click event and trigger cluster animations
+        await page.waitForTimeout(CLUSTER_CLICK_PROCESSING_WAIT);
 
         const ok = await page
           .waitForFunction(
@@ -106,7 +119,7 @@ test.describe('Map Editing', () => {
               );
             },
             [initialZoom, initialClusterCount],
-            { timeout: 10000, polling: 250 },
+            { timeout: CLUSTER_WAIT_TIMEOUT, polling: CLUSTER_POLLING_INTERVAL },
           )
           .then(() => true)
           .catch(() => false);
@@ -137,12 +150,20 @@ test.describe('Map Editing', () => {
 
           const cluster = page.locator('.marker-cluster').first();
           await cluster.waitFor({ state: 'visible', timeout: 10000 });
+
+          // Ensure cluster is stable and ready for interaction
+          await page.waitForTimeout(CLUSTER_STABILITY_WAIT);
+          await cluster.scrollIntoViewIfNeeded();
           await cluster.click();
+
+          // Give Firefox time to process the click event
+          await page.waitForTimeout(CLUSTER_CLICK_PROCESSING_WAIT);
+
           await page
             .waitForFunction(
               () => document.querySelectorAll('.leaflet-marker-icon').length > 0,
               null,
-              { timeout: 10000, polling: 250 },
+              { timeout: CLUSTER_WAIT_TIMEOUT, polling: CLUSTER_POLLING_INTERVAL },
             )
             .catch(() => {});
           markerCount = await page.locator('.leaflet-marker-icon').count();
