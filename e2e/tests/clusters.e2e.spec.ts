@@ -12,9 +12,9 @@ import * as allure from 'allure-js-commons';
 
 // Timing constants for cluster interactions (especially important for Firefox)
 const CLUSTER_STABILITY_WAIT = 200; // Wait before clicking to ensure cluster is stable
-const CLUSTER_CLICK_PROCESSING_WAIT = 300; // Wait after clicking for event processing
+const CLUSTER_CLICK_PROCESSING_WAIT = 600; // Wait after clicking for event processing (increased for Firefox animations)
 const CLUSTER_WAIT_TIMEOUT = 15000; // Timeout for waiting on cluster state changes
-const CLUSTER_POLLING_INTERVAL = 300; // Polling interval for checking cluster state
+const CLUSTER_POLLING_INTERVAL = 200; // Polling interval for checking cluster state (reduced for faster detection)
 
 test.describe('Map Editing', () => {
   test.describe('Clusters', () => {
