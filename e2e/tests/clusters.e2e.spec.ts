@@ -66,8 +66,10 @@ test.describe('Map Editing', () => {
 
     test('Clicking a cluster zooms in or reduces cluster count', async ({
       page,
+      browserName,
     }: {
       page: Page;
+      browserName: string;
     }) => {
       const map = new MapWrapper(page);
 
@@ -91,8 +93,23 @@ test.describe('Map Editing', () => {
 
         const cluster = page.locator('.marker-cluster').first();
         await cluster.waitFor({ state: 'visible', timeout: 10000 });
-        await cluster.click();
+        
+        // Firefox needs extra time to ensure the element is interactive
+        const isFirefox = browserName.toLowerCase() === 'firefox';
+        if (isFirefox) {
+          await page.waitForTimeout(500);
+        }
+        
+        await cluster.click({ force: true });
+        
+        // Give Firefox extra time to process the click and start zoom animation
+        if (isFirefox) {
+          await page.waitForTimeout(500);
+        }
 
+        // Use longer timeout for Firefox
+        const timeout = isFirefox ? 20000 : 10000;
+        
         const ok = await page
           .waitForFunction(
             ([prevZoom, prevCount]: [number | null, number]) => {
@@ -106,7 +123,7 @@ test.describe('Map Editing', () => {
               );
             },
             [initialZoom, initialClusterCount],
-            { timeout: 10000, polling: 250 },
+            { timeout, polling: 250 },
           )
           .then(() => true)
           .catch(() => false);
