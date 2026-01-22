@@ -136,29 +136,74 @@ jobs:
     needs: [pre-check, test-backend, test-frontend]
     if: |
       always() && needs.pre-check.result == 'success' && (
-         !contains(needs.test-backend.result, 'failure') && 
-         !contains(needs.test-frontend.result, 'failure')
+        !contains(needs.test-backend.result, 'failure') && 
+        !contains(needs.test-frontend.result, 'failure')
       )
     environment: production
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
+
       - name: 📦 Setup pnpm
         uses: pnpm/action-setup@v2
         with:
           version: 10
+
       - name: 🟢 Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: 'pnpm'
+
+      - name: 🧾 Create environment files
+        run: |
+          mkdir -p apps/backend apps/frontend
+          cat <<'EOF' > apps/backend/.env.development
+          ${{ secrets.DEV_ENV_BACKEND }}
+          EOF
+
+          cat <<'EOF' > apps/frontend/.env.development
+          ${{ secrets.DEV_ENV_FRONTEND }}
+          EOF
+      # -----------------------------------------------
       - name: 🛠️ Install dependencies
         run: pnpm install --frozen-lockfile
+
       - name: 🌐 Install Playwright Browsers
         run: pnpm e2e:install-browsers
+
+      - name: 🏗️ Build shared packages
+        run: pnpm shared:build
+
+      - name: 🗄️ Start database
+        run: docker compose up -d database
+
+      - name: ⏳ Wait for DB
+        run: |
+          for i in {1..30}; do
+            docker exec gis_postgres pg_isready -U gis_user && exit 0
+            sleep 2
+          done
+          exit 1
+
+      - name: 🌍 Install GDAL
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gdal-bin
+
+      - name: 🌱 Seed database
+        run: pnpm run database:seed
+        env:
+          DATABASE_URL: postgresql://gis_user:gis_pass@localhost:5432/gis_db
+      # -----------------------------------------------
+
       - name: 🎭 Run E2E
         run: pnpm e2e:headless
+        env:
+          DATABASE_URL: postgresql://gis_user:gis_pass@localhost:5432/gis_db
+          NODE_ENV: production
+
       - name: 📤 Upload Results
         if: always()
         uses: actions/upload-artifact@v4
