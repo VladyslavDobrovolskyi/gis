@@ -2,7 +2,7 @@ const { execSync } = require('child_process');
 const path = require('path');
 const dotenv = require('dotenv-flow');
 
-dotenv.config({ path: path.resolve(__dirname, '../apps/backend/.env') });
+dotenv.config({ path: path.resolve(__dirname, '../apps/backend') });
 let dsn = process.env.DATABASE_URL;
 if (!dsn) {
   console.error('DATABASE_URL is not set in .env');
