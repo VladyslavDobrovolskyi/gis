@@ -159,12 +159,12 @@ jobs:
       - name: 🧾 Create environment files
         run: |
           mkdir -p apps/backend apps/frontend
-          cat <<'EOF' > apps/backend/.env.development
-          ${{ secrets.DEV_ENV_BACKEND }}
+          cat <<'EOF' > apps/backend/.env.production
+          ${{ secrets.ENV_BACKEND }}
           EOF
 
-          cat <<'EOF' > apps/frontend/.env.development
-          ${{ secrets.DEV_ENV_FRONTEND }}
+          cat <<'EOF' > apps/frontend/.env.production
+          ${{ secrets.ENV_FRONTEND }}
           EOF
       # -----------------------------------------------
       - name: 🛠️ Install dependencies
