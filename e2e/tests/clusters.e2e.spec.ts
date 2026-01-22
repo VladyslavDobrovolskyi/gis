@@ -109,7 +109,7 @@ test.describe('Map Editing', () => {
 
         // Use longer timeout for Firefox
         const timeout = isFirefox ? 20000 : 10000;
-        
+
         const ok = await page
           .waitForFunction(
             ([prevZoom, prevCount]: [number | null, number]) => {
