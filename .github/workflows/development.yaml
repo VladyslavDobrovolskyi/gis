@@ -163,11 +163,11 @@ jobs:
           mkdir -p apps/backend apps/frontend
 
           cat <<'EOF' > apps/backend/.env.development
-          ${{ secrets.DEV_ENV_BACKEND }}
+          ${{ secrets.ENV_BACKEND }}
           EOF
 
           cat <<'EOF' > apps/frontend/.env.development
-          ${{ secrets.DEV_ENV_FRONTEND }}
+          ${{ secrets.ENV_FRONTEND }}
           EOF
       - name: 🛠️ Install dependencies
         run: pnpm install --frozen-lockfile
